@@ -11,22 +11,8 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useAudioPlayer, type AudioSource } from "expo-audio";
 
-/**
- * 
- * Metronome
- *
- *
- * Audio:
- * Replace the two null values below with local Expo audio sources, e.g.
- *
- *   const DOWNBEAT_SOUND: AudioSource = require("../assets/downbeat.mp3");
- *   const UPBEAT_SOUND: AudioSource = require("../assets/upbeat.mp3");
- *
- * The metronome works silently until those sources are supplied.
- */
-
-const DOWNBEAT_SOUND: AudioSource | AudioSource = require("../assets/sounds/UpClick.m4a");
-const UPBEAT_SOUND: AudioSource | AudioSource = require("../assets/sounds/DownClick.m4a");
+const DOWNBEAT_SOUND: AudioSource = require("../assets/sounds/DownClick.m4a");
+const UPBEAT_SOUND: AudioSource = require("../assets/sounds/UpClick.m4a");
 
 const MIN_BPM = 20;
 const MAX_BPM = 300;
@@ -181,8 +167,11 @@ export default function PolygonMetronome({
 
   const [popup, setPopup] = useState<Popup>(null);
   const [bpmInput, setBpmInput] = useState(String(bpm));
-  const [signatureInput, setSignatureInput] = useState(
-    `${initialSignature.numerator}/${initialSignature.denominator}`
+  const [numeratorInput, setNumeratorInput] = useState(
+    String(initialSignature.numerator)
+  );
+  const [denominatorInput, setDenominatorInput] = useState(
+    String(initialSignature.denominator)
   );
 
   const [training, setTraining] = useState<TrainingSettings>({
@@ -195,12 +184,16 @@ export default function PolygonMetronome({
   const [trainingActive, setTrainingActive] = useState(false);
 
   const lastTapTimes = useRef<number[]>([]);
+  // Audio timing is deliberately independent from the animation loop.
+  // requestAnimationFrame is only used to draw the moving dot.
   const nextBeatTime = useRef<number | null>(null);
+  const lastBeatTime = useRef<number | null>(null);
+  const currentBeatRef = useRef(0);
+  const schedulerInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const animationFrame = useRef<number | null>(null);
-  const lastTriggeredBeat = useRef<number | null>(null);
   const trainingBeatCounter = useRef(0);
 
-  // Audio players are created without a source. Add the MP3s above later.
+  // Dedicated players keep downbeats and upbeats independent.
   const downbeatPlayer = useAudioPlayer(DOWNBEAT_SOUND);
   const upbeatPlayer = useAudioPlayer(UPBEAT_SOUND);
 
@@ -266,57 +259,91 @@ export default function PolygonMetronome({
   const startMetronome = useCallback(() => {
     stopAnimation();
 
-    // Always restart from the first beat.
-    setCurrentBeat(0);
-    setBeatProgress(0);
-    lastTriggeredBeat.current = 0;
-    triggerBeat(0);
-
+    // Always restart from beat 1.
     const startTime = performance.now();
+    currentBeatRef.current = 0;
+    lastBeatTime.current = startTime;
     nextBeatTime.current = startTime + beatIntervalMs;
 
+    setCurrentBeat(0);
+    setBeatProgress(0);
     setIsPlaying(true);
+
+    // Beat 1 is fired immediately, then future beats are handled by the
+    // look-ahead scheduler below rather than by requestAnimationFrame.
+    triggerBeat(0);
   }, [beatIntervalMs, stopAnimation, triggerBeat]);
 
   const stopMetronome = useCallback(() => {
     setIsPlaying(false);
     stopAnimation();
+
+    if (schedulerInterval.current !== null) {
+      clearInterval(schedulerInterval.current);
+      schedulerInterval.current = null;
+    }
+
     nextBeatTime.current = null;
+    lastBeatTime.current = null;
     setBeatProgress(0);
     setCurrentBeat(0);
-    lastTriggeredBeat.current = null;
+    currentBeatRef.current = 0;
   }, [stopAnimation]);
 
+  // Audio scheduler: checks frequently and fires beats from a monotonic clock.
+  // It is intentionally separate from the visual requestAnimationFrame loop.
+  useEffect(() => {
+    if (!isPlaying) return;
+
+    const scheduleDueBeats = () => {
+      const now = performance.now();
+      const interval = 60000 / bpm;
+
+      if (nextBeatTime.current === null) {
+        nextBeatTime.current = now + interval;
+      }
+
+      // Catch up if the JS thread was briefly delayed. We advance the beat
+      // clock from the scheduled time instead of "now", avoiding accumulated
+      // drift.
+      while (nextBeatTime.current !== null && now >= nextBeatTime.current) {
+        const scheduledTime : number = nextBeatTime.current;
+        const nextBeat =
+          (currentBeatRef.current + 1) % timeSignature.numerator;
+
+        currentBeatRef.current = nextBeat;
+        lastBeatTime.current = scheduledTime;
+        nextBeatTime.current = scheduledTime + interval;
+
+        triggerBeat(nextBeat);
+      }
+    };
+
+    // A short look-ahead poll keeps audio dispatch independent of rendering.
+    schedulerInterval.current = setInterval(scheduleDueBeats, 15);
+    scheduleDueBeats();
+
+    return () => {
+      if (schedulerInterval.current !== null) {
+        clearInterval(schedulerInterval.current);
+        schedulerInterval.current = null;
+      }
+    };
+  }, [bpm, isPlaying, timeSignature.numerator, triggerBeat]);
+
+  // Visual animation only. It never triggers audio.
   useEffect(() => {
     if (!isPlaying) return;
 
     let frame: number;
 
     const animate = (now: number) => {
-      if (!nextBeatTime.current) {
-        nextBeatTime.current = now + beatIntervalMs;
+      const beatStart = lastBeatTime.current;
+      const interval = 60000 / bpm;
+
+      if (beatStart !== null) {
+        setBeatProgress(clamp((now - beatStart) / interval, 0, 1));
       }
-
-      // Catch up if the JS thread was briefly delayed.
-      while (now >= nextBeatTime.current) {
-        const next = ((lastTriggeredBeat.current ?? 0) + 1) %
-          timeSignature.numerator;
-
-        triggerBeat(next);
-        lastTriggeredBeat.current = next;
-        nextBeatTime.current += beatIntervalMs;
-      }
-
-      const previousBeatTime =
-        nextBeatTime.current - beatIntervalMs;
-
-      const progress = clamp(
-        (now - previousBeatTime) / beatIntervalMs,
-        0,
-        1
-      );
-
-      setBeatProgress(progress);
 
       frame = requestAnimationFrame(animate);
       animationFrame.current = frame;
@@ -331,7 +358,20 @@ export default function PolygonMetronome({
         animationFrame.current = null;
       }
     };
-  }, [beatIntervalMs, isPlaying, timeSignature.numerator, triggerBeat]);
+  }, [bpm, isPlaying]);
+
+  // If BPM changes while playing, keep the current beat and retime the next
+  // beat from the most recent beat rather than restarting the metronome.
+  useEffect(() => {
+    if (!isPlaying || lastBeatTime.current === null) return;
+
+    const interval = 60000 / bpm;
+    const next = lastBeatTime.current + interval;
+
+    if (nextBeatTime.current !== null) {
+      nextBeatTime.current = next;
+    }
+  }, [bpm, isPlaying]);
 
   // Time-based BPM training. Beat-based training is handled directly
   // when triggerBeat() fires, so it follows the actual metronome clock.
@@ -397,25 +437,35 @@ export default function PolygonMetronome({
   };
 
   const changeBpm = (delta: number) => {
-    setBpm((previous) => clamp(previous + delta, MIN_BPM, MAX_BPM));
+    setBpm((previous) => {
+      const next = clamp(previous + delta, MIN_BPM, MAX_BPM);
+      setBpmInput(String(next));
+      return next;
+    });
   };
 
   const applyBpmInput = () => {
     const parsed = Number.parseInt(bpmInput, 10);
 
     if (!Number.isNaN(parsed)) {
-      setBpm(clamp(parsed, MIN_BPM, MAX_BPM));
+      const next = clamp(parsed, MIN_BPM, MAX_BPM);
+      setBpm(next);
+      setBpmInput(String(next));
+    } else {
+      setBpmInput(String(bpm));
     }
 
     setPopup(null);
   };
 
   const applySignature = () => {
-    const nextSignature = parseTimeSignature(signatureInput);
-    setTimeSignature(nextSignature);
-    setSignatureInput(
-      `${nextSignature.numerator}/${nextSignature.denominator}`
+    const nextSignature = parseTimeSignature(
+      `${numeratorInput}/${denominatorInput}`
     );
+
+    setTimeSignature(nextSignature);
+    setNumeratorInput(String(nextSignature.numerator));
+    setDenominatorInput(String(nextSignature.denominator));
     setPopup(null);
   };
 
@@ -437,8 +487,9 @@ export default function PolygonMetronome({
       intervals.reduce((sum, value) => sum + value, 0) /
       intervals.length;
 
-    const tappedBpm = Math.round(60000 / average);
-    setBpm(clamp(tappedBpm, MIN_BPM, MAX_BPM));
+    const tappedBpm = clamp(Math.round(60000 / average), MIN_BPM, MAX_BPM);
+    setBpm(tappedBpm);
+    setBpmInput(String(tappedBpm));
   };
 
   const openBpmPopup = () => {
@@ -447,9 +498,8 @@ export default function PolygonMetronome({
   };
 
   const openSignaturePopup = () => {
-    setSignatureInput(
-      `${timeSignature.numerator}/${timeSignature.denominator}`
-    );
+    setNumeratorInput(String(timeSignature.numerator));
+    setDenominatorInput(String(timeSignature.denominator));
     setPopup("signature");
   };
 
@@ -458,13 +508,19 @@ export default function PolygonMetronome({
   };
 
   const startTraining = () => {
-    const maxBpm = clamp(training.maxBpm, MIN_BPM, MAX_BPM);
+    const increaseBy = clamp(Math.round(training.increaseBy), 1, 100);
+    const intervalValue = Math.max(1, Math.round(training.intervalValue));
+    const maxBpm = clamp(
+      Math.round(training.maxBpm),
+      Math.max(MIN_BPM, bpm),
+      MAX_BPM
+    );
 
     setTraining({
       ...training,
       maxBpm,
-      increaseBy: Math.max(1, Math.round(training.increaseBy)),
-      intervalValue: Math.max(1, Math.round(training.intervalValue)),
+      increaseBy,
+      intervalValue,
     });
 
     trainingBeatCounter.current = 0;
@@ -564,9 +620,11 @@ export default function PolygonMetronome({
           accessibilityRole="button"
           accessibilityLabel={`Time signature ${timeSignature.numerator}/${timeSignature.denominator}`}
         >
-          <Text style={styles.signatureValue}>
-            {timeSignature.numerator}/{timeSignature.denominator}
-          </Text>
+          <TimeSignatureDisplay
+            numerator={timeSignature.numerator}
+            denominator={timeSignature.denominator}
+            compact
+          />
         </Pressable>
       </View>
 
@@ -733,16 +791,46 @@ export default function PolygonMetronome({
               onClose={() => setPopup(null)}
             />
 
-            <TextInput
-              value={signatureInput}
-              onChangeText={setSignatureInput}
-              keyboardType="numbers-and-punctuation"
-              selectTextOnFocus
-              style={styles.signatureInput}
-              placeholder="4/4"
-              placeholderTextColor={MUTED}
-              maxLength={5}
-            />
+            <View style={styles.signatureEditor}>
+              <TextInput
+                value={numeratorInput}
+                onChangeText={(value) =>
+                  setNumeratorInput(value.replace(/[^0-9]/g, ""))
+                }
+                keyboardType="number-pad"
+                selectTextOnFocus
+                style={styles.signaturePartInput}
+                maxLength={2}
+                onBlur={() => {
+                  const parsed = Number.parseInt(numeratorInput, 10);
+                  if (!Number.isNaN(parsed)) {
+                    setNumeratorInput(
+                      String(clamp(parsed, MIN_NUMERATOR, MAX_NUMERATOR))
+                    );
+                  }
+                }}
+              />
+              <View style={styles.signatureDivider} />
+              <TextInput
+                value={denominatorInput}
+                onChangeText={(value) =>
+                  setDenominatorInput(value.replace(/[^0-9]/g, ""))
+                }
+                keyboardType="number-pad"
+                selectTextOnFocus
+                style={styles.signaturePartInput}
+                maxLength={1}
+                onBlur={() => {
+                  const parsed = Number.parseInt(denominatorInput, 10);
+                  const valid = DENOMINATORS.includes(parsed as Denominator);
+                  if (!Number.isNaN(parsed) && valid) {
+                    setDenominatorInput(String(parsed));
+                  } else {
+                    setDenominatorInput(String(timeSignature.denominator));
+                  }
+                }}
+              />
+            </View>
 
             <Text style={styles.helperText}>
               Numerator: 2–12{"\n"}
@@ -771,23 +859,23 @@ export default function PolygonMetronome({
             <TrainingNumberRow
               label="Start BPM"
               value={bpm}
-              onMinus={() => changeBpm(-1)}
-              onPlus={() => changeBpm(1)}
+              min={MIN_BPM}
+              max={MAX_BPM}
+              onChange={(value) => {
+                setBpm(value);
+                setBpmInput(String(value));
+              }}
             />
 
             <TrainingNumberRow
               label="Increase by"
               value={training.increaseBy}
-              onMinus={() =>
+              min={1}
+              max={100}
+              onChange={(value) =>
                 setTraining((previous) => ({
                   ...previous,
-                  increaseBy: Math.max(1, previous.increaseBy - 1),
-                }))
-              }
-              onPlus={() =>
-                setTraining((previous) => ({
-                  ...previous,
-                  increaseBy: Math.min(100, previous.increaseBy + 1),
+                  increaseBy: value,
                 }))
               }
             />
@@ -795,16 +883,16 @@ export default function PolygonMetronome({
             <Text style={styles.sectionLabel}>Increase every</Text>
 
             <View style={styles.trainingModeRow}>
-              <TextInput
-                value={String(training.intervalValue)}
-                onChangeText={(value) =>
+              <TrainingNumberInput
+                value={training.intervalValue}
+                min={1}
+                max={3600}
+                onChange={(value) =>
                   setTraining((previous) => ({
                     ...previous,
-                    intervalValue: Number(value.replace(/[^0-9]/g, "")) || 1,
+                    intervalValue: value,
                   }))
                 }
-                keyboardType="number-pad"
-                style={styles.smallNumberInput}
               />
 
               <Pressable
@@ -829,23 +917,18 @@ export default function PolygonMetronome({
             <Text style={styles.sectionLabel}>Maximum BPM</Text>
 
             <View style={styles.trainingModeRow}>
-              <TextInput
-                value={String(training.maxBpm)}
-                onChangeText={(value) =>
+              <TrainingNumberInput
+                value={training.maxBpm}
+                min={MIN_BPM}
+                max={MAX_BPM}
+                onChange={(value) =>
                   setTraining((previous) => ({
                     ...previous,
-                    maxBpm: clamp(
-                      Number(value.replace(/[^0-9]/g, "")) || MIN_BPM,
-                      MIN_BPM,
-                      MAX_BPM
-                    ),
+                    maxBpm: value,
                   }))
                 }
-                keyboardType="number-pad"
-                style={styles.smallNumberInput}
-                maxLength={3}
               />
-              <Text style={styles.unitText}>MAX 300</Text>
+              <Text style={styles.unitText}>20–300 BPM</Text>
             </View>
 
             {trainingActive && (
@@ -946,29 +1029,91 @@ function PopupAction({
 function TrainingNumberRow({
   label,
   value,
-  onMinus,
-  onPlus,
+  min,
+  max,
+  onChange,
 }: {
   label: string;
   value: number;
-  onMinus: () => void;
-  onPlus: () => void;
+  min: number;
+  max: number;
+  onChange: (value: number) => void;
 }) {
   return (
     <>
       <Text style={styles.sectionLabel}>{label}</Text>
-      <View style={styles.numberControl}>
-        <Pressable style={styles.circleButton} onPress={onMinus}>
-          <Text style={styles.circleButtonText}>−</Text>
-        </Pressable>
-
-        <Text style={styles.trainingValue}>{value}</Text>
-
-        <Pressable style={styles.circleButton} onPress={onPlus}>
-          <Text style={styles.circleButtonText}>+</Text>
-        </Pressable>
-      </View>
+      <TrainingNumberInput
+        value={value}
+        min={min}
+        max={max}
+        onChange={onChange}
+      />
     </>
+  );
+}
+
+function TrainingNumberInput({
+  value,
+  min,
+  max,
+  onChange,
+}: {
+  value: number;
+  min: number;
+  max: number;
+  onChange: (value: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(value));
+
+  useEffect(() => {
+    setDraft(String(value));
+  }, [value]);
+
+  const commit = () => {
+    const parsed = Number.parseInt(draft, 10);
+
+    if (Number.isNaN(parsed)) {
+      setDraft(String(value));
+      return;
+    }
+
+    const committed = clamp(parsed, min, max);
+    setDraft(String(committed));
+    onChange(committed);
+  };
+
+  return (
+    <TextInput
+      value={draft}
+      onChangeText={(value) => setDraft(value.replace(/[^0-9]/g, ""))}
+      onBlur={commit}
+      onSubmitEditing={commit}
+      keyboardType="number-pad"
+      style={styles.smallNumberInput}
+      maxLength={4}
+    />
+  );
+}
+
+function TimeSignatureDisplay({
+  numerator,
+  denominator,
+  compact = false,
+}: {
+  numerator: number;
+  denominator: number;
+  compact?: boolean;
+}) {
+  return (
+    <View style={[styles.signatureDisplay, compact && styles.signatureDisplayCompact]}>
+      <Text style={[styles.signatureDisplayText, compact && styles.signatureDisplayTextCompact]}>
+        {numerator}
+      </Text>
+      <View style={styles.signatureDisplayLine} />
+      <Text style={[styles.signatureDisplayText, compact && styles.signatureDisplayTextCompact]}>
+        {denominator}
+      </Text>
+    </View>
   );
 }
 
@@ -1062,10 +1207,34 @@ const styles = StyleSheet.create({
     marginTop: -2,
   },
 
-  signatureValue: {
+  signatureDisplay: {
+    width: 82,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  signatureDisplayCompact: {
+    width: 56,
+  },
+
+  signatureDisplayText: {
     color: TEXT,
-    fontSize: 22,
+    fontSize: 28,
+    lineHeight: 30,
     fontWeight: "500",
+    textAlign: "center",
+  },
+
+  signatureDisplayTextCompact: {
+    fontSize: 21,
+    lineHeight: 21,
+  },
+
+  signatureDisplayLine: {
+    width: 30,
+    height: 2,
+    backgroundColor: MUTED,
+    marginVertical: 2,
   },
 
   trainingIndicator: {
@@ -1246,17 +1415,32 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
 
-  signatureInput: {
-    height: 62,
-    color: TEXT,
+  signatureEditor: {
+    width: 120,
+    alignSelf: "center",
+    alignItems: "center",
     backgroundColor: SURFACE_2,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: "#343A43",
+    paddingVertical: 6,
+    marginBottom: 12,
+  },
+
+  signaturePartInput: {
+    width: "100%",
+    height: 52,
+    color: TEXT,
     textAlign: "center",
     fontSize: 30,
     fontWeight: "600",
-    marginBottom: 12,
+    padding: 0,
+  },
+
+  signatureDivider: {
+    width: 74,
+    height: 2,
+    backgroundColor: MUTED,
   },
 
   helperText: {
@@ -1371,202 +1555,3 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 });
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// import React, { useEffect, useMemo, useRef, useState } from 'react';
-// import { View, StyleSheet, Animated, Easing } from 'react-native';
-// import Svg, { Circle, Line, Polygon } from 'react-native-svg';
-
-// type Props = {
-//   beats?: number;
-//   size?: number;
-//   bpm?: number;
-// };
-// type Point = {
-//   x: number;
-//   y: number;
-// };
-
-// export default function PolygonMetronome({
-//   beats = 4,
-//   size = 280,
-//   bpm = 100,
-// }: Props) {
-//   const radius = size * 0.38;
-//   const center = size / 2;
-
-//   const [currentBeat, setCurrentBeat] = useState(0);
-
-//   const pulse = useRef(new Animated.Value(0)).current;
-
-//   // Generate polygon points
-//   const points = useMemo(() => {
-//     return Array.from({ length: beats }).map((_, i) => {
-//       const angle = (-Math.PI / 2) + (i * 2 * Math.PI) / beats;
-
-//       return {
-//         x: center + radius * Math.cos(angle),
-//         y: center + radius * Math.sin(angle),
-//       };
-//     });
-//   }, [beats, radius, center]);
-
-//   //Generate background points: 
-//   function generateBackgroundPoints(
-//     center: number,
-//     radius: number,
-//     minSides: number,
-//     maxSides: number
-//   ): Point[] {
-//     const points: Point[] = [];
-
-//     for (let sides = minSides; sides <= maxSides; sides+=2) {
-//       for (let i = 0; i < sides; i++) {
-//         const angle = (2 * Math.PI * i) / sides;
-
-//         points.push({
-//           x: center - radius * Math.sin(angle),
-//           y: center - radius * Math.cos(angle),
-//         });
-//       }
-//     }
-
-//     return points;
-//   }
-
-//   const backgroundPoints = generateBackgroundPoints(center, radius, 4, 8);
-
-//   // Animation loop
-//   useEffect(() => {
-//     const interval = 60000 / bpm;
-
-//     const loop = () => {
-//       Animated.timing(pulse, {
-//         toValue: 1,
-//         duration: interval,
-//         easing: Easing.linear,
-//         useNativeDriver: false,
-//       }).start(() => {
-//         pulse.setValue(0);
-
-//         setCurrentBeat(prev => (prev + 1) % beats);
-
-//         loop();
-//       });
-//     };
-
-//     loop();
-//   }, [bpm, beats]);
-
-//   // Current edge
-//   const start = points[currentBeat];
-//   const end = points[(currentBeat + 1) % beats];
-
-//   // Moving pulse position
-//   const animatedX = pulse.interpolate({
-//     inputRange: [0, 1],
-//     outputRange: [start.x, end.x],
-//   });
-
-//   const animatedY = pulse.interpolate({
-//     inputRange: [0, 1],
-//     outputRange: [start.y, end.y],
-//   });
-
-//   const AnimatedCircle = Animated.createAnimatedComponent(Circle);
-
-//   return (
-//     <View style={styles.container}>
-//       <Svg width={size} height={size}>
-//         {/*Background Polygon */}
-//         <Circle
-//           cx={center}
-//           cy={center}
-//           r={radius}
-//           fill="none"
-//           stroke="rgba(42, 99, 198, 0.15)"
-//           strokeWidth={2}
-//         />
-
-//         {backgroundPoints.map((p1, i) => {
-//           const p2 = backgroundPoints[(i + 1) % backgroundPoints.length];
-          
-//           return (
-//             <Line
-//                 key={`bgpnt${i}`}
-//                 x1={p1.x}
-//                 y1={p1.y}
-//                 x2={p2.x}
-//                 y2={p2.y}
-//                 stroke="rgba(115, 220, 35, 0.83)"
-//                 strokeWidth={1}
-//               />
-//           );
-          
-//         })}
-
-
-//         {/* Main polygon */}
-//         {beats === 2 ? (
-//           <Line
-//             x1={points[0].x}
-//             y1={points[0].y}
-//             x2={points[1].x}
-//             y2={points[1].y}
-//             stroke="#4FC3F7"
-//             strokeWidth={3}
-//           />
-//         ) : (
-//           <Polygon
-//             points={points.map(p => `${p.x},${p.y}`).join(' ')}
-//             fill="none"
-//             stroke="#4FC3F7"
-//             strokeWidth={3}
-//           />
-//         )}
-
-//         {/* Beat nodes */}
-//         {points.map((p, i) => (
-//           <Circle
-//             key={i}
-//             cx={p.x}
-//             cy={p.y}
-//             r={i === currentBeat ? 10 : 6}
-//             fill={i === 0 ? '#FF5252' : '#FFFFFF'}
-//           />
-//         ))}
-
-//         {/* Moving pulse */}
-//         <AnimatedCircle
-//           cx={animatedX}
-//           cy={animatedY}
-//           r={7}
-//           fill="#00E5FF"
-//         />
-//       </Svg>
-//     </View>
-//   );
-// }
-
-// const styles = StyleSheet.create({
-//   container: {
-//     justifyContent: 'center',
-//     alignItems: 'center',
-//   },
-// });
