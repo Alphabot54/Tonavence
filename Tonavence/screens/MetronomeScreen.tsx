@@ -1,7 +1,7 @@
 import { Text, View, StyleSheet, Pressable } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-//import { router } from "expo-router";
+import { router } from "expo-router";
 import PolygonMetronome from "../components/PolygonMetronome";
 
 export default function MetronomeScreen() {
@@ -9,7 +9,7 @@ export default function MetronomeScreen() {
     <SafeAreaView edges={["top"]} style={styles.container}>
       <View style={styles.headerContainer}>
         <Pressable
-//          onPress={() => router.back()}
+          onPress={() => router.back()}
           style={styles.backButton}
           hitSlop={10}
         >

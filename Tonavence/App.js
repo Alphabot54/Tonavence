@@ -1,12 +1,15 @@
-import MetronomeScreen from './screens/MetronomeScreen';
-import TunerScreen from './screens/TunerScreen';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { Stack } from 'expo-router';
 
 export default function App() {
   return (
     <SafeAreaProvider>
-      <TunerScreen />
-      {/*<MetronomeScreen />*/}
+      <Stack
+        screenOptions={{
+          headerShown: false,
+          animation: "slide_from_right",
+        }}
+      />
     </SafeAreaProvider>
   );
 }
