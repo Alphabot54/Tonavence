@@ -113,6 +113,20 @@ function pcm16Base64ToFloat32(
 // ─────────────────────────────────────────────
 
 export default function Tuner() {
+  /*for testing*/
+    console.log("TUNER COMPONENT LOADED");
+  const frameSubscriptionRef = useRef<{
+    remove: () => void;
+  } | null>(null);
+
+  const errorSubscriptionRef = useRef<{
+    remove: () => void;
+  } | null>(null);
+
+  const isListeningRef = useRef(false);
+  const isStartingRef = useRef(false);
+  /*end*/
+
   const [note, setNote] =
     useState<string | null>(null);
 
@@ -158,16 +172,28 @@ export default function Tuner() {
       level?: number;
     }) => {
       try {
+        console.log(
+          "PROCESSING AUDIO FRAME",
+          frame.sampleRate,
+          frame.pcmBase64?.length
+        );
+
         if (!frame.pcmBase64) {
+          console.log("NO PCM DATA");
           return;
         }
 
-        const samples =
-          pcm16Base64ToFloat32(
-            frame.pcmBase64
-          );
+        const samples = pcm16Base64ToFloat32(
+          frame.pcmBase64
+        );
+
+        console.log(
+          "SAMPLES CREATED:",
+          samples.length
+        );
 
         if (samples.length === 0) {
+          console.log("NO SAMPLES");
           return;
         }
 
@@ -177,11 +203,12 @@ export default function Tuner() {
           referenceFrequencyRef.current
         );
 
+        console.log("PITCH RESULT:", result);
+
         if (!result) {
           setNote(null);
           setOctave(null);
           setCents(null);
-
           return;
         }
 
@@ -190,7 +217,7 @@ export default function Tuner() {
         setCents(result.cents);
       } catch (error) {
         console.warn(
-          "Error processing tuner audio:",
+          "ERROR PROCESSING TUNER AUDIO:",
           error
         );
       }
@@ -199,87 +226,181 @@ export default function Tuner() {
   );
 
   // ─────────────────────────────────────────────
-  // Microphone setup
+  // Microphone permission
+  // ─────────────────────────────────────────────
+
+  const requestMicrophonePermission = async (): Promise<boolean> => {
+    try {
+      console.log("REQUEST MICROPHONE PERMISSION CALLED");
+      console.log("ABOUT TO CALL requestPermission()");
+
+      const permission = await requestPermission();
+
+      console.log("requestPermission() RETURNED:", permission);
+
+      if (permission !== "granted") {
+        console.log("MICROPHONE PERMISSION DENIED");
+        setHasPermission(false);
+        return false;
+      }
+
+      console.log("MICROPHONE PERMISSION GRANTED");
+      setHasPermission(true);
+
+      return true;
+    } catch (error) {
+      console.warn(
+        "Unable to request microphone permission:",
+        error
+      );
+
+      setHasPermission(false);
+      return false;
+    }
+  };
+
+  // ─────────────────────────────────────────────
+  // Microphone stream
+  // ─────────────────────────────────────────────
+
+  // const startMicrophone = async () => {
+  //   try {
+  //     /*
+  //     * Subscribe before starting the microphone
+  //     * so we don't miss the first audio frames.
+  //     */
+  //     addFrameListener(processAudioFrame);
+
+  //     addErrorListener(
+  //       (error: { message: string }) => {
+  //         console.warn(
+  //           "Tuner audio error:",
+  //           error.message
+  //         );
+  //       }
+  //     );
+
+  //     await start({
+  //       sampleRate: 44100,
+  //       frameDurationMs: 50,
+  //       channels: 1,
+  //       enableLevelMeter: true,
+  //     });
+  //   } catch (error) {
+  //     console.warn(
+  //       "Unable to start tuner:",
+  //       error
+  //     );
+
+  //     setHasPermission(false);
+  //   }
+  // };
+
+  const startMicrophone =
+  useCallback(async () => {
+    console.log("START MICROPHONE CALLED");
+
+    if (
+      isListeningRef.current ||
+      isStartingRef.current
+    ) {
+      console.log(
+        "MICROPHONE ALREADY STARTING OR LISTENING"
+      );
+      return;
+    }
+
+    isStartingRef.current = true;
+
+    try {
+      console.log("ADDING FRAME LISTENER");
+
+      frameSubscriptionRef.current =
+        addFrameListener(
+          processAudioFrame
+        );
+
+      console.log("FRAME LISTENER ADDED");
+
+      console.log("ADDING ERROR LISTENER");
+
+      errorSubscriptionRef.current =
+        addErrorListener(
+          (error: { message: string }) => {
+            console.error(
+              "TUNER AUDIO ERROR:",
+              error.message
+            );
+          }
+        );
+
+      console.log("ERROR LISTENER ADDED");
+
+      console.log("CALLING START()");
+
+      await start({
+        sampleRate: 44100,
+        frameDurationMs: 50,
+        channels: 1,
+        enableLevelMeter: true,
+      });
+
+      console.log("START() COMPLETED");
+
+      isListeningRef.current = true;
+      isStartingRef.current = false;
+
+      console.log(
+        "MICROPHONE IS NOW LISTENING"
+      );
+    } catch (error) {
+      console.error(
+        "UNABLE TO START TUNER:",
+        error
+      );
+
+      if (
+        frameSubscriptionRef.current
+      ) {
+        frameSubscriptionRef.current.remove();
+        frameSubscriptionRef.current = null;
+      }
+
+      if (
+        errorSubscriptionRef.current
+      ) {
+        errorSubscriptionRef.current.remove();
+        errorSubscriptionRef.current = null;
+      }
+
+      isListeningRef.current = false;
+      isStartingRef.current = false;
+    }
+  }, [processAudioFrame]);
+  
+  // ─────────────────────────────────────────────
+  // Initial permission request
   // ─────────────────────────────────────────────
 
   useEffect(() => {
-    let frameSubscription:
-      | { remove: () => void }
-      | undefined;
+    const initializeMicrophone = async () => {
+      console.log("TUNER USE EFFECT RUNNING");
 
-    let errorSubscription:
-      | { remove: () => void }
-      | undefined;
+      const granted = await requestMicrophonePermission();
 
-    let mounted = true;
+      console.log("PERMISSION FUNCTION RETURNED:", granted);
 
-    const setupMicrophone =
-      async () => {
-        try {
-          const permission =
-            await requestPermission();
+      if (granted) {
+        console.log("PERMISSION GRANTED — STARTING MICROPHONE");
 
-          if (!mounted) {
-            return;
-          }
+        await startMicrophone();
 
-          if (permission !== "granted") {
-            setHasPermission(false);
-            return;
-          }
-
-          setHasPermission(true);
-
-          /*
-           * Subscribe BEFORE starting the microphone
-           * so we don't miss the first frames.
-           */
-          frameSubscription =
-            addFrameListener(
-              processAudioFrame
-            );
-
-          errorSubscription =
-            addErrorListener(
-              (error: {
-                message: string;
-              }) => {
-                console.warn(
-                  "Tuner audio error:",
-                  error.message
-                );
-              }
-            );
-
-          await start({
-            sampleRate: 44100,
-            frameDurationMs: 50,
-            channels: 1,
-            enableLevelMeter: true,
-          });
-        } catch (error) {
-          console.warn(
-            "Unable to start tuner:",
-            error
-          );
-
-          if (mounted) {
-            setHasPermission(false);
-          }
-        }
-      };
-
-    void setupMicrophone();
-
-    return () => {
-      mounted = false;
-
-      frameSubscription?.remove();
-      errorSubscription?.remove();
-
-      void stop();
+        console.log("START MICROPHONE FINISHED");
+      }
     };
-  }, [processAudioFrame]);
+
+    void initializeMicrophone();
+  }, []);
 
   // ─────────────────────────────────────────────
   // Tuning calculations
@@ -767,19 +888,23 @@ export default function Tuner() {
       {/* ─────────────────────────────── */}
 
       {!hasPermission && (
-        <View
-          style={
-            styles.permissionOverlay
-          }
-        >
-          <Text
-            style={
-              styles.permissionText
-            }
-          >
-            Microphone permission is
-            required to use the tuner.
+        <View style={styles.permissionOverlay}>
+          <Text style={styles.permissionText}>
+            Microphone permission is required
+            to use the tuner.
           </Text>
+
+          <Pressable
+           onPress={requestMicrophonePermission}
+            style={({ pressed }) => [
+              styles.permissionButton,
+              pressed && styles.permissionButtonPressed,
+            ]}
+          >
+            <Text style={styles.permissionButtonText}>
+              Grant Permission
+            </Text>
+          </Pressable>
         </View>
       )}
 
@@ -1027,5 +1152,23 @@ const styles = StyleSheet.create({
     color: MUTED,
     fontSize: 14,
     textAlign: "center",
+  },
+
+    permissionButton: {
+    marginTop: 12,
+    backgroundColor: DEFAULT_ACCENT_COLOR,
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+
+  permissionButtonPressed: {
+    opacity: 0.75,
+  },
+
+  permissionButtonText: {
+    color: BACKGROUND,
+    fontSize: 14,
+    fontWeight: "700",
   },
 });

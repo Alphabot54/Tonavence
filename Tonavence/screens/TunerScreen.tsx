@@ -5,23 +5,23 @@ import Tuner from "../components/Tuner";
 import { router } from "expo-router";
 
 export default function TunerScreen() {
+  console.log("TUNER SCREEN LOADED");
+
   return (
     <SafeAreaView edges={["top"]} style={styles.container}>
       <View style={styles.headerContainer}>
         <Pressable
-          onPress={() => router.back()}
-          style={styles.backButton}
-          hitSlop={10}
+          onPress={() => {
+            console.log("BACK BUTTON PRESSED");
+            router.back();
+          }}
         >
-          <Ionicons 
-            name="chevron-back"
-            size={28}
-            color="#111"
-          />
+          <Ionicons name="arrow-back" size={28} color="white" />
         </Pressable>
 
         <Text style={styles.headerTitle}>Tuner</Text>
       </View>
+
       <Tuner />
     </SafeAreaView>
   );
