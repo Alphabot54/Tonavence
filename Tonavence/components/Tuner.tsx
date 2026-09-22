@@ -55,6 +55,22 @@ const BAR_HEIGHTS = [
   74,
 ];
 
+// Number of recent valid pitch detections
+// used for smoothing.
+const PITCH_HISTORY_SIZE = 5;
+
+// Number of matching detections required
+// before accepting a note.
+const MIN_STABLE_DETECTIONS = 3;
+
+// Number of consecutive detections required
+// before switching from one note to another.
+const NOTE_SWITCH_DETECTIONS = 2;
+
+// Number of consecutive null frames before
+// clearing the tuner display.
+const NULL_FRAMES_TO_CLEAR = 8;
+
 // ─────────────────────────────────────────────
 // PCM16 → Float32
 // ─────────────────────────────────────────────
@@ -109,23 +125,92 @@ function pcm16Base64ToFloat32(
 }
 
 // ─────────────────────────────────────────────
+// Median helper
+// ─────────────────────────────────────────────
+
+function getMedian(
+  values: number[]
+): number {
+  if (values.length === 0) {
+    return 0;
+  }
+
+  const sorted = [...values].sort(
+    (a, b) => a - b
+  );
+
+  const middle =
+    Math.floor(sorted.length / 2);
+
+  if (sorted.length % 2 === 0) {
+    return (
+      (sorted[middle - 1] +
+        sorted[middle]) /
+      2
+    );
+  }
+
+  return sorted[middle];
+}
+
+// ─────────────────────────────────────────────
 // Component
 // ─────────────────────────────────────────────
 
 export default function Tuner() {
-  /*for testing*/
-    console.log("TUNER COMPONENT LOADED");
-  const frameSubscriptionRef = useRef<{
-    remove: () => void;
-  } | null>(null);
+  console.log("TUNER COMPONENT LOADED");
 
-  const errorSubscriptionRef = useRef<{
-    remove: () => void;
-  } | null>(null);
+  const frameSubscriptionRef =
+    useRef<{
+      remove: () => void;
+    } | null>(null);
 
-  const isListeningRef = useRef(false);
-  const isStartingRef = useRef(false);
-  /*end*/
+  const errorSubscriptionRef =
+    useRef<{
+      remove: () => void;
+    } | null>(null);
+
+  const isListeningRef =
+    useRef(false);
+
+  const isStartingRef =
+    useRef(false);
+
+  // ─────────────────────────────────────────────
+  // Pitch smoothing refs
+  // ─────────────────────────────────────────────
+
+  const pitchHistoryRef =
+    useRef<
+      {
+        note: string;
+        octave: number;
+        frequency: number;
+        cents: number;
+      }[]
+    >([]);
+
+  const nullFrameCountRef =
+    useRef(0);
+
+  const displayedPitchRef =
+    useRef<{
+      note: string;
+      octave: number;
+      frequency: number;
+      cents: number;
+    } | null>(null);
+
+  const pendingPitchRef =
+    useRef<{
+      note: string;
+      octave: number;
+      count: number;
+    } | null>(null);
+
+  // ─────────────────────────────────────────────
+  // State
+  // ─────────────────────────────────────────────
 
   const [note, setNote] =
     useState<string | null>(null);
@@ -172,49 +257,304 @@ export default function Tuner() {
       level?: number;
     }) => {
       try {
-        console.log(
-          "PROCESSING AUDIO FRAME",
-          frame.sampleRate,
-          frame.pcmBase64?.length
-        );
-
         if (!frame.pcmBase64) {
-          console.log("NO PCM DATA");
           return;
         }
 
-        const samples = pcm16Base64ToFloat32(
-          frame.pcmBase64
-        );
-
-        console.log(
-          "SAMPLES CREATED:",
-          samples.length
-        );
+        const samples =
+          pcm16Base64ToFloat32(
+            frame.pcmBase64
+          );
 
         if (samples.length === 0) {
-          console.log("NO SAMPLES");
           return;
         }
 
-        const result = analyzePitch(
-          samples,
-          frame.sampleRate,
-          referenceFrequencyRef.current
-        );
+        const result =
+          analyzePitch(
+            samples,
+            frame.sampleRate,
+            referenceFrequencyRef.current
+          );
 
-        console.log("PITCH RESULT:", result);
+        // ─────────────────────────────────────
+        // No pitch detected
+        // ─────────────────────────────────────
 
         if (!result) {
-          setNote(null);
-          setOctave(null);
-          setCents(null);
+          nullFrameCountRef.current += 1;
+
+          /*
+           * Do not immediately clear the tuner.
+           *
+           * Individual audio frames can fail to produce
+           * a pitch even while the guitar is still ringing.
+           */
+          if (
+            nullFrameCountRef.current >=
+            NULL_FRAMES_TO_CLEAR
+          ) {
+            displayedPitchRef.current =
+              null;
+
+            pitchHistoryRef.current =
+              [];
+
+            pendingPitchRef.current =
+              null;
+
+            setNote(null);
+            setOctave(null);
+            setCents(null);
+          }
+
           return;
         }
 
-        setNote(result.note);
-        setOctave(result.octave);
-        setCents(result.cents);
+        // We received a valid pitch.
+        nullFrameCountRef.current = 0;
+
+        // ─────────────────────────────────────
+        // Add pitch to history
+        // ─────────────────────────────────────
+
+        pitchHistoryRef.current.push({
+          note: result.note,
+          octave: result.octave,
+          frequency: result.frequency,
+          cents: result.cents,
+        });
+
+        /*
+         * Keep only the most recent five
+         * valid detections.
+         */
+        if (
+          pitchHistoryRef.current.length >
+          PITCH_HISTORY_SIZE
+        ) {
+          pitchHistoryRef.current.shift();
+        }
+
+        const history =
+          pitchHistoryRef.current;
+
+        // ─────────────────────────────────────
+        // Group detections by note + octave
+        // ─────────────────────────────────────
+
+        const groups = new Map<
+          string,
+          {
+            note: string;
+            octave: number;
+            frequency: number;
+            cents: number;
+          }[]
+        >();
+
+        for (const pitch of history) {
+          const key =
+            `${pitch.note}${pitch.octave}`;
+
+          if (!groups.has(key)) {
+            groups.set(key, []);
+          }
+
+          groups
+            .get(key)!
+            .push(pitch);
+        }
+
+        // ─────────────────────────────────────
+        // Find most common note
+        // ─────────────────────────────────────
+
+        let bestGroup:
+          | {
+              note: string;
+              octave: number;
+              frequency: number;
+              cents: number;
+            }[]
+          | null = null;
+
+        for (const group of groups.values()) {
+          if (
+            !bestGroup ||
+            group.length >
+              bestGroup.length
+          ) {
+            bestGroup = group;
+          }
+        }
+
+        /*
+         * We need at least three matching
+         * detections before accepting the pitch.
+         */
+        if (
+          !bestGroup ||
+          bestGroup.length <
+            MIN_STABLE_DETECTIONS
+        ) {
+          return;
+        }
+
+        const stableNote =
+          bestGroup[0].note;
+
+        const stableOctave =
+          bestGroup[0].octave;
+
+        // ─────────────────────────────────────
+        // Prevent sudden note jumps
+        // ─────────────────────────────────────
+
+        const currentPitch =
+          displayedPitchRef.current;
+
+        if (
+          currentPitch &&
+          (
+            currentPitch.note !==
+              stableNote ||
+            currentPitch.octave !==
+              stableOctave
+          )
+        ) {
+          /*
+           * We detected a different note.
+           *
+           * Require it to appear again before
+           * switching the displayed note.
+           */
+          if (
+            pendingPitchRef.current &&
+            pendingPitchRef.current.note ===
+              stableNote &&
+            pendingPitchRef.current.octave ===
+              stableOctave
+          ) {
+            pendingPitchRef.current.count += 1;
+          } else {
+            pendingPitchRef.current = {
+              note: stableNote,
+              octave: stableOctave,
+              count: 1,
+            };
+          }
+
+          if (
+            pendingPitchRef.current.count <
+            NOTE_SWITCH_DETECTIONS
+          ) {
+            return;
+          }
+
+          pendingPitchRef.current = null;
+        }
+
+        pendingPitchRef.current = null;
+
+        // ─────────────────────────────────────
+        // Median frequency
+        // ─────────────────────────────────────
+
+        /*
+         * Use the median instead of the latest
+         * frequency to remove occasional noisy
+         * measurements.
+         */
+        const medianFrequency =
+          getMedian(
+            bestGroup.map(
+              pitch => pitch.frequency
+            )
+          );
+
+        // ─────────────────────────────────────
+        // Calculate target frequency
+        // ─────────────────────────────────────
+
+        const noteNames = [
+          "C",
+          "C#",
+          "D",
+          "D#",
+          "E",
+          "F",
+          "F#",
+          "G",
+          "G#",
+          "A",
+          "A#",
+          "B",
+        ];
+
+        const noteIndex =
+          noteNames.indexOf(
+            stableNote
+          );
+
+        if (noteIndex === -1) {
+          return;
+        }
+
+        /*
+         * MIDI number:
+         *
+         * C4 = 60
+         * A4 = 69
+         */
+        const midiNumber =
+          (stableOctave + 1) * 12 +
+          noteIndex;
+
+        const targetFrequency =
+          referenceFrequencyRef.current *
+          Math.pow(
+            2,
+            (midiNumber - 69) / 12
+          );
+
+        // ─────────────────────────────────────
+        // Calculate smoothed cents
+        // ─────────────────────────────────────
+
+        const smoothedCents =
+          1200 *
+          Math.log2(
+            medianFrequency /
+              targetFrequency
+          );
+
+        const finalPitch = {
+          note: stableNote,
+          octave: stableOctave,
+          frequency:
+            medianFrequency,
+          cents: smoothedCents,
+        };
+
+        // ─────────────────────────────────────
+        // Update display
+        // ─────────────────────────────────────
+
+        displayedPitchRef.current =
+          finalPitch;
+
+        setNote(
+          finalPitch.note
+        );
+
+        setOctave(
+          finalPitch.octave
+        );
+
+        setCents(
+          finalPitch.cents
+        );
       } catch (error) {
         console.warn(
           "ERROR PROCESSING TUNER AUDIO:",
@@ -229,178 +569,255 @@ export default function Tuner() {
   // Microphone permission
   // ─────────────────────────────────────────────
 
-  const requestMicrophonePermission = async (): Promise<boolean> => {
-    try {
-      console.log("REQUEST MICROPHONE PERMISSION CALLED");
-      console.log("ABOUT TO CALL requestPermission()");
+  const requestMicrophonePermission =
+    async (): Promise<boolean> => {
+      try {
+        console.log(
+          "REQUEST MICROPHONE PERMISSION CALLED"
+        );
 
-      const permission = await requestPermission();
+        console.log(
+          "ABOUT TO CALL requestPermission()"
+        );
 
-      console.log("requestPermission() RETURNED:", permission);
+        const permission =
+          await requestPermission();
 
-      if (permission !== "granted") {
-        console.log("MICROPHONE PERMISSION DENIED");
+        console.log(
+          "requestPermission() RETURNED:",
+          permission
+        );
+
+        if (
+          permission !== "granted"
+        ) {
+          console.log(
+            "MICROPHONE PERMISSION DENIED"
+          );
+
+          setHasPermission(false);
+
+          return false;
+        }
+
+        console.log(
+          "MICROPHONE PERMISSION GRANTED"
+        );
+
+        setHasPermission(true);
+
+        return true;
+      } catch (error) {
+        console.warn(
+          "Unable to request microphone permission:",
+          error
+        );
+
         setHasPermission(false);
+
         return false;
       }
-
-      console.log("MICROPHONE PERMISSION GRANTED");
-      setHasPermission(true);
-
-      return true;
-    } catch (error) {
-      console.warn(
-        "Unable to request microphone permission:",
-        error
-      );
-
-      setHasPermission(false);
-      return false;
-    }
-  };
+    };
 
   // ─────────────────────────────────────────────
   // Microphone stream
   // ─────────────────────────────────────────────
 
-  // const startMicrophone = async () => {
-  //   try {
-  //     /*
-  //     * Subscribe before starting the microphone
-  //     * so we don't miss the first audio frames.
-  //     */
-  //     addFrameListener(processAudioFrame);
-
-  //     addErrorListener(
-  //       (error: { message: string }) => {
-  //         console.warn(
-  //           "Tuner audio error:",
-  //           error.message
-  //         );
-  //       }
-  //     );
-
-  //     await start({
-  //       sampleRate: 44100,
-  //       frameDurationMs: 50,
-  //       channels: 1,
-  //       enableLevelMeter: true,
-  //     });
-  //   } catch (error) {
-  //     console.warn(
-  //       "Unable to start tuner:",
-  //       error
-  //     );
-
-  //     setHasPermission(false);
-  //   }
-  // };
-
   const startMicrophone =
-  useCallback(async () => {
-    console.log("START MICROPHONE CALLED");
-
-    if (
-      isListeningRef.current ||
-      isStartingRef.current
-    ) {
+    useCallback(async () => {
       console.log(
-        "MICROPHONE ALREADY STARTING OR LISTENING"
-      );
-      return;
-    }
-
-    isStartingRef.current = true;
-
-    try {
-      console.log("ADDING FRAME LISTENER");
-
-      frameSubscriptionRef.current =
-        addFrameListener(
-          processAudioFrame
-        );
-
-      console.log("FRAME LISTENER ADDED");
-
-      console.log("ADDING ERROR LISTENER");
-
-      errorSubscriptionRef.current =
-        addErrorListener(
-          (error: { message: string }) => {
-            console.error(
-              "TUNER AUDIO ERROR:",
-              error.message
-            );
-          }
-        );
-
-      console.log("ERROR LISTENER ADDED");
-
-      console.log("CALLING START()");
-
-      await start({
-        sampleRate: 44100,
-        frameDurationMs: 50,
-        channels: 1,
-        enableLevelMeter: true,
-      });
-
-      console.log("START() COMPLETED");
-
-      isListeningRef.current = true;
-      isStartingRef.current = false;
-
-      console.log(
-        "MICROPHONE IS NOW LISTENING"
-      );
-    } catch (error) {
-      console.error(
-        "UNABLE TO START TUNER:",
-        error
+        "START MICROPHONE CALLED"
       );
 
       if (
-        frameSubscriptionRef.current
+        isListeningRef.current ||
+        isStartingRef.current
       ) {
-        frameSubscriptionRef.current.remove();
-        frameSubscriptionRef.current = null;
+        console.log(
+          "MICROPHONE ALREADY STARTING OR LISTENING"
+        );
+
+        return;
       }
 
-      if (
-        errorSubscriptionRef.current
-      ) {
-        errorSubscriptionRef.current.remove();
-        errorSubscriptionRef.current = null;
-      }
+      isStartingRef.current =
+        true;
 
-      isListeningRef.current = false;
-      isStartingRef.current = false;
-    }
-  }, [processAudioFrame]);
-  
+      try {
+        console.log(
+          "ADDING FRAME LISTENER"
+        );
+
+        frameSubscriptionRef.current =
+          addFrameListener(
+            processAudioFrame
+          );
+
+        console.log(
+          "FRAME LISTENER ADDED"
+        );
+
+        console.log(
+          "ADDING ERROR LISTENER"
+        );
+
+        errorSubscriptionRef.current =
+          addErrorListener(
+            (error: {
+              message: string;
+            }) => {
+              console.error(
+                "TUNER AUDIO ERROR:",
+                error.message
+              );
+            }
+          );
+
+        console.log(
+          "ERROR LISTENER ADDED"
+        );
+
+        console.log(
+          "CALLING START()"
+        );
+
+        await start({
+          sampleRate: 44100,
+          frameDurationMs: 50,
+          channels: 1,
+          enableLevelMeter: true,
+        });
+
+        console.log(
+          "START() COMPLETED"
+        );
+
+        isListeningRef.current =
+          true;
+
+        isStartingRef.current =
+          false;
+
+        console.log(
+          "MICROPHONE IS NOW LISTENING"
+        );
+      } catch (error) {
+        console.error(
+          "UNABLE TO START TUNER:",
+          error
+        );
+
+        if (
+          frameSubscriptionRef.current
+        ) {
+          frameSubscriptionRef.current.remove();
+
+          frameSubscriptionRef.current =
+            null;
+        }
+
+        if (
+          errorSubscriptionRef.current
+        ) {
+          errorSubscriptionRef.current.remove();
+
+          errorSubscriptionRef.current =
+            null;
+        }
+
+        isListeningRef.current =
+          false;
+
+        isStartingRef.current =
+          false;
+      }
+    }, [processAudioFrame]);
+
+  // ─────────────────────────────────────────────
+  // Stop microphone
+  // ─────────────────────────────────────────────
+
+  const stopMicrophone =
+    useCallback(async () => {
+      try {
+        if (
+          frameSubscriptionRef.current
+        ) {
+          frameSubscriptionRef.current.remove();
+
+          frameSubscriptionRef.current =
+            null;
+        }
+
+        if (
+          errorSubscriptionRef.current
+        ) {
+          errorSubscriptionRef.current.remove();
+
+          errorSubscriptionRef.current =
+            null;
+        }
+
+        if (
+          isListeningRef.current
+        ) {
+          await stop();
+        }
+
+        isListeningRef.current =
+          false;
+
+        isStartingRef.current =
+          false;
+      } catch (error) {
+        console.warn(
+          "UNABLE TO STOP TUNER:",
+          error
+        );
+      }
+    }, []);
+
   // ─────────────────────────────────────────────
   // Initial permission request
   // ─────────────────────────────────────────────
 
   useEffect(() => {
-    const initializeMicrophone = async () => {
-      console.log("TUNER USE EFFECT RUNNING");
+    const initializeMicrophone =
+      async () => {
+        console.log(
+          "TUNER USE EFFECT RUNNING"
+        );
 
-      const granted = await requestMicrophonePermission();
+        const granted =
+          await requestMicrophonePermission();
 
-      console.log("PERMISSION FUNCTION RETURNED:", granted);
+        console.log(
+          "PERMISSION FUNCTION RETURNED:",
+          granted
+        );
 
-      if (granted) {
-        console.log("PERMISSION GRANTED — STARTING MICROPHONE");
+        if (granted) {
+          console.log(
+            "PERMISSION GRANTED — STARTING MICROPHONE"
+          );
 
-        await startMicrophone();
+          await startMicrophone();
 
-        console.log("START MICROPHONE FINISHED");
-      }
-    };
+          console.log(
+            "START MICROPHONE FINISHED"
+          );
+        }
+      };
 
     void initializeMicrophone();
-  }, []);
+
+    return () => {
+      void stopMicrophone();
+    };
+  }, [
+    startMicrophone,
+    stopMicrophone,
+  ]);
 
   // ─────────────────────────────────────────────
   // Tuning calculations
@@ -408,38 +825,40 @@ export default function Tuner() {
 
   const isInTune =
     cents !== null &&
-    Math.abs(cents) <= TUNED_CENTS;
+    Math.abs(cents) <=
+      TUNED_CENTS;
 
-  const getBarLevel = (): number => {
-    if (cents === null) {
+  const getBarLevel =
+    (): number => {
+      if (cents === null) {
+        return 0;
+      }
+
+      const distance =
+        Math.abs(cents);
+
+      if (distance <= 3) {
+        return 5;
+      }
+
+      if (distance <= 7) {
+        return 4;
+      }
+
+      if (distance <= 12) {
+        return 3;
+      }
+
+      if (distance <= 20) {
+        return 2;
+      }
+
+      if (distance <= 35) {
+        return 1;
+      }
+
       return 0;
-    }
-
-    const distance =
-      Math.abs(cents);
-
-    if (distance <= 3) {
-      return 5;
-    }
-
-    if (distance <= 7) {
-      return 4;
-    }
-
-    if (distance <= 12) {
-      return 3;
-    }
-
-    if (distance <= 20) {
-      return 2;
-    }
-
-    if (distance <= 35) {
-      return 1;
-    }
-
-    return 0;
-  };
+    };
 
   const barLevel =
     getBarLevel();
@@ -476,9 +895,13 @@ export default function Tuner() {
         : [4, 3, 2, 1, 0];
 
     return indexes.map(
-      (heightIndex, index) => ({
+      (
         heightIndex,
-        active: index < barLevel,
+        index
+      ) => ({
+        heightIndex,
+        active:
+          index < barLevel,
         color: getBarColor(
           heightIndex,
           index < barLevel
@@ -497,25 +920,29 @@ export default function Tuner() {
   // Reference frequency controls
   // ─────────────────────────────────────────────
 
-  const decreaseReference = () => {
-    setReferenceFrequency(
-      current =>
-        Math.max(
-          MIN_REFERENCE_FREQUENCY,
-          current - REFERENCE_STEP
-        )
-    );
-  };
+  const decreaseReference =
+    () => {
+      setReferenceFrequency(
+        current =>
+          Math.max(
+            MIN_REFERENCE_FREQUENCY,
+            current -
+              REFERENCE_STEP
+          )
+      );
+    };
 
-  const increaseReference = () => {
-    setReferenceFrequency(
-      current =>
-        Math.min(
-          MAX_REFERENCE_FREQUENCY,
-          current + REFERENCE_STEP
-        )
-    );
-  };
+  const increaseReference =
+    () => {
+      setReferenceFrequency(
+        current =>
+          Math.min(
+            MAX_REFERENCE_FREQUENCY,
+            current +
+              REFERENCE_STEP
+          )
+      );
+    };
 
   // ─────────────────────────────────────────────
   // Display
@@ -539,14 +966,16 @@ export default function Tuner() {
   // ─────────────────────────────────────────────
 
   return (
-    <View style={styles.container}>
-
+    <View
+      style={styles.container}
+    >
       {/* ─────────────────────────────── */}
       {/* Main tuner */}
       {/* ─────────────────────────────── */}
 
-      <View style={styles.tunerArea}>
-
+      <View
+        style={styles.tunerArea}
+      >
         <Text
           style={[
             styles.note,
@@ -559,13 +988,19 @@ export default function Tuner() {
 
         {/* Bars */}
 
-        <View style={styles.barRow}>
-
+        <View
+          style={styles.barRow}
+        >
           {/* Left */}
 
-          <View style={styles.sideBars}>
+          <View
+            style={styles.sideBars}
+          >
             {leftBars.map(
-              (bar, index) => (
+              (
+                bar,
+                index
+              ) => (
                 <View
                   key={`left-${index}`}
                   style={[
@@ -594,9 +1029,14 @@ export default function Tuner() {
 
           {/* Right */}
 
-          <View style={styles.sideBars}>
+          <View
+            style={styles.sideBars}
+          >
             {rightBars.map(
-              (bar, index) => (
+              (
+                bar,
+                index
+              ) => (
                 <View
                   key={`right-${index}`}
                   style={[
@@ -618,7 +1058,6 @@ export default function Tuner() {
               )
             )}
           </View>
-
         </View>
 
         {/* Cents */}
@@ -626,7 +1065,6 @@ export default function Tuner() {
         <View
           style={styles.centsRow}
         >
-
           <View
             style={styles.centsSide}
           >
@@ -664,9 +1102,7 @@ export default function Tuner() {
                 </Text>
               )}
           </View>
-
         </View>
-
       </View>
 
       {/* ─────────────────────────────── */}
@@ -674,9 +1110,10 @@ export default function Tuner() {
       {/* ─────────────────────────────── */}
 
       <View
-        style={styles.bottomControls}
+        style={
+          styles.bottomControls
+        }
       >
-
         {/* Reference */}
 
         <Pressable
@@ -685,7 +1122,9 @@ export default function Tuner() {
               true
             )
           }
-          style={({ pressed }) => [
+          style={({
+            pressed,
+          }) => [
             styles.referenceButton,
             pressed &&
               styles.referenceButtonPressed,
@@ -705,17 +1144,22 @@ export default function Tuner() {
         <Pressable
           onPress={() =>
             setShowOctave(
-              current => !current
+              current =>
+                !current
             )
           }
-          style={({ pressed }) => [
+          style={({
+            pressed,
+          }) => [
             styles.octaveButton,
             pressed &&
               styles.octaveButtonPressed,
           ]}
         >
           <Text
-            style={styles.octaveText}
+            style={
+              styles.octaveText
+            }
           >
             Octave:{" "}
             {showOctave
@@ -723,7 +1167,6 @@ export default function Tuner() {
               : "Off"}
           </Text>
         </Pressable>
-
       </View>
 
       {/* ─────────────────────────────── */}
@@ -747,13 +1190,11 @@ export default function Tuner() {
             styles.modalOverlay
           }
         >
-
           <View
             style={
               styles.referenceModal
             }
           >
-
             <Text
               style={
                 styles.modalTitle
@@ -775,7 +1216,6 @@ export default function Tuner() {
                 styles.frequencyRow
               }
             >
-
               <Pressable
                 onPress={
                   decreaseReference
@@ -840,7 +1280,6 @@ export default function Tuner() {
                   +
                 </Text>
               </Pressable>
-
             </View>
 
             <Text
@@ -877,9 +1316,7 @@ export default function Tuner() {
                 Done
               </Text>
             </Pressable>
-
           </View>
-
         </View>
       </Modal>
 
@@ -888,26 +1325,47 @@ export default function Tuner() {
       {/* ─────────────────────────────── */}
 
       {!hasPermission && (
-        <View style={styles.permissionOverlay}>
-          <Text style={styles.permissionText}>
-            Microphone permission is required
-            to use the tuner.
+        <View
+          style={
+            styles.permissionOverlay
+          }
+        >
+          <Text
+            style={
+              styles.permissionText
+            }
+          >
+            Microphone permission is
+            required to use the tuner.
           </Text>
 
           <Pressable
-           onPress={requestMicrophonePermission}
-            style={({ pressed }) => [
+            onPress={async () => {
+              const granted =
+                await requestMicrophonePermission();
+
+              if (granted) {
+                await startMicrophone();
+              }
+            }}
+            style={({
+              pressed,
+            }) => [
               styles.permissionButton,
-              pressed && styles.permissionButtonPressed,
+              pressed &&
+                styles.permissionButtonPressed,
             ]}
           >
-            <Text style={styles.permissionButtonText}>
+            <Text
+              style={
+                styles.permissionButtonText
+              }
+            >
               Grant Permission
             </Text>
           </Pressable>
         </View>
       )}
-
     </View>
   );
 }
@@ -916,259 +1374,307 @@ export default function Tuner() {
 // Styles
 // ─────────────────────────────────────────────
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: BACKGROUND,
-  },
+const styles =
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor:
+        BACKGROUND,
+    },
 
-  tunerArea: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingBottom: 80,
-  },
+    tunerArea: {
+      flex: 1,
+      alignItems:
+        "center",
+      justifyContent:
+        "center",
+      paddingBottom: 80,
+    },
 
-  note: {
-    fontSize: 72,
-    fontWeight: "600",
-    color: TEXT,
-    letterSpacing: 1,
-    marginBottom: 34,
-  },
+    note: {
+      fontSize: 72,
+      fontWeight: "600",
+      color: TEXT,
+      letterSpacing: 1,
+      marginBottom: 34,
+    },
 
-  noteTuned: {
-    color: TUNED_COLOR,
-  },
+    noteTuned: {
+      color: TUNED_COLOR,
+    },
 
-  barRow: {
-    width: "100%",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 18,
-  },
+    barRow: {
+      width: "100%",
+      flexDirection:
+        "row",
+      alignItems:
+        "center",
+      justifyContent:
+        "center",
+      paddingHorizontal: 18,
+    },
 
-  sideBars: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-  },
+    sideBars: {
+      flex: 1,
+      flexDirection:
+        "row",
+      alignItems:
+        "center",
+      justifyContent:
+        "center",
+      gap: 6,
+    },
 
-  centerSpace: {
-    width: 18,
-  },
+    centerSpace: {
+      width: 18,
+    },
 
-  bar: {
-    width: 7,
-    borderRadius: 4,
-  },
+    bar: {
+      width: 7,
+      borderRadius: 4,
+    },
 
-  centsRow: {
-    width: "100%",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 18,
-    marginTop: 18,
-  },
+    centsRow: {
+      width: "100%",
+      flexDirection:
+        "row",
+      alignItems:
+        "center",
+      justifyContent:
+        "center",
+      paddingHorizontal: 18,
+      marginTop: 18,
+    },
 
-  centsSide: {
-    flex: 1,
-    minHeight: 24,
-    alignItems: "center",
-  },
+    centsSide: {
+      flex: 1,
+      minHeight: 24,
+      alignItems:
+        "center",
+    },
 
-  centsText: {
-    color: MUTED,
-    fontSize: 17,
-    fontVariant: ["tabular-nums"],
-  },
+    centsText: {
+      color: MUTED,
+      fontSize: 17,
+      fontVariant: [
+        "tabular-nums",
+      ],
+    },
 
-  bottomControls: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 24,
-    paddingHorizontal: 20,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
+    bottomControls: {
+      position:
+        "absolute",
+      left: 0,
+      right: 0,
+      bottom: 24,
+      paddingHorizontal: 20,
+      flexDirection:
+        "row",
+      justifyContent:
+        "space-between",
+      alignItems:
+        "center",
+    },
 
-  referenceButton: {
-    backgroundColor: SURFACE,
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: SURFACE_2,
-  },
+    referenceButton: {
+      backgroundColor:
+        SURFACE,
+      borderRadius: 10,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      borderWidth: 1,
+      borderColor:
+        SURFACE_2,
+    },
 
-  referenceButtonPressed: {
-    backgroundColor: SURFACE_2,
-  },
+    referenceButtonPressed: {
+      backgroundColor:
+        SURFACE_2,
+    },
 
-  referenceText: {
-    color: TEXT,
-    fontSize: 14,
-    fontWeight: "500",
-  },
+    referenceText: {
+      color: TEXT,
+      fontSize: 14,
+      fontWeight: "500",
+    },
 
-  octaveButton: {
-    backgroundColor: SURFACE,
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: SURFACE_2,
-  },
+    octaveButton: {
+      backgroundColor:
+        SURFACE,
+      borderRadius: 10,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      borderWidth: 1,
+      borderColor:
+        SURFACE_2,
+    },
 
-  octaveButtonPressed: {
-    backgroundColor: SURFACE_2,
-  },
+    octaveButtonPressed: {
+      backgroundColor:
+        SURFACE_2,
+    },
 
-  octaveText: {
-    color: MUTED,
-    fontSize: 14,
-    fontWeight: "500",
-  },
+    octaveText: {
+      color: MUTED,
+      fontSize: 14,
+      fontWeight: "500",
+    },
 
-  // ─────────────────────────────────────────────
-  // Modal
-  // ─────────────────────────────────────────────
+    // ─────────────────────────────────────────────
+    // Modal
+    // ─────────────────────────────────────────────
 
-  modalOverlay: {
-    flex: 1,
-    backgroundColor:
-      "rgba(0, 0, 0, 0.65)",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 28,
-  },
+    modalOverlay: {
+      flex: 1,
+      backgroundColor:
+        "rgba(0, 0, 0, 0.65)",
+      alignItems:
+        "center",
+      justifyContent:
+        "center",
+      paddingHorizontal: 28,
+    },
 
-  referenceModal: {
-    width: "100%",
-    maxWidth: 360,
-    backgroundColor: SURFACE,
-    borderRadius: 18,
-    padding: 24,
-    borderWidth: 1,
-    borderColor: SURFACE_2,
-  },
+    referenceModal: {
+      width: "100%",
+      maxWidth: 360,
+      backgroundColor:
+        SURFACE,
+      borderRadius: 18,
+      padding: 24,
+      borderWidth: 1,
+      borderColor:
+        SURFACE_2,
+    },
 
-  modalTitle: {
-    color: TEXT,
-    fontSize: 22,
-    fontWeight: "600",
-    textAlign: "center",
-  },
+    modalTitle: {
+      color: TEXT,
+      fontSize: 22,
+      fontWeight: "600",
+      textAlign:
+        "center",
+    },
 
-  modalSubtitle: {
-    color: MUTED,
-    fontSize: 14,
-    textAlign: "center",
-    marginTop: 6,
-  },
+    modalSubtitle: {
+      color: MUTED,
+      fontSize: 14,
+      textAlign:
+        "center",
+      marginTop: 6,
+    },
 
-  frequencyRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginTop: 28,
-  },
+    frequencyRow: {
+      flexDirection:
+        "row",
+      alignItems:
+        "center",
+      justifyContent:
+        "space-between",
+      marginTop: 28,
+    },
 
-  adjustButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    backgroundColor: SURFACE_2,
-    alignItems: "center",
-    justifyContent: "center",
-  },
+    adjustButton: {
+      width: 48,
+      height: 48,
+      borderRadius: 12,
+      backgroundColor:
+        SURFACE_2,
+      alignItems:
+        "center",
+      justifyContent:
+        "center",
+    },
 
-  adjustButtonPressed: {
-    opacity: 0.7,
-  },
+    adjustButtonPressed: {
+      opacity: 0.7,
+    },
 
-  adjustButtonDisabled: {
-    opacity: 0.3,
-  },
+    adjustButtonDisabled: {
+      opacity: 0.3,
+    },
 
-  adjustText: {
-    color: TEXT,
-    fontSize: 30,
-    fontWeight: "300",
-  },
+    adjustText: {
+      color: TEXT,
+      fontSize: 30,
+      fontWeight: "300",
+    },
 
-  frequencyValue: {
-    color: TEXT,
-    fontSize: 28,
-    fontWeight: "600",
-    fontVariant: ["tabular-nums"],
-  },
+    frequencyValue: {
+      color: TEXT,
+      fontSize: 28,
+      fontWeight: "600",
+      fontVariant: [
+        "tabular-nums",
+      ],
+    },
 
-  rangeText: {
-    color: MUTED,
-    fontSize: 13,
-    textAlign: "center",
-    marginTop: 12,
-  },
+    rangeText: {
+      color: MUTED,
+      fontSize: 13,
+      textAlign:
+        "center",
+      marginTop: 12,
+    },
 
-  doneButton: {
-    marginTop: 24,
-    backgroundColor:
-      DEFAULT_ACCENT_COLOR,
-    borderRadius: 12,
-    paddingVertical: 13,
-    alignItems: "center",
-  },
+    doneButton: {
+      marginTop: 24,
+      backgroundColor:
+        DEFAULT_ACCENT_COLOR,
+      borderRadius: 12,
+      paddingVertical: 13,
+      alignItems:
+        "center",
+    },
 
-  doneButtonPressed: {
-    opacity: 0.75,
-  },
+    doneButtonPressed: {
+      opacity: 0.75,
+    },
 
-  doneText: {
-    color: BACKGROUND,
-    fontSize: 16,
-    fontWeight: "700",
-  },
+    doneText: {
+      color: BACKGROUND,
+      fontSize: 16,
+      fontWeight: "700",
+    },
 
-  permissionOverlay: {
-    position: "absolute",
-    left: 20,
-    right: 20,
-    bottom: 80,
-    backgroundColor: SURFACE,
-    borderRadius: 12,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: SURFACE_2,
-  },
+    permissionOverlay: {
+      position:
+        "absolute",
+      left: 20,
+      right: 20,
+      bottom: 80,
+      backgroundColor:
+        SURFACE,
+      borderRadius: 12,
+      padding: 14,
+      borderWidth: 1,
+      borderColor:
+        SURFACE_2,
+    },
 
-  permissionText: {
-    color: MUTED,
-    fontSize: 14,
-    textAlign: "center",
-  },
+    permissionText: {
+      color: MUTED,
+      fontSize: 14,
+      textAlign:
+        "center",
+    },
 
     permissionButton: {
-    marginTop: 12,
-    backgroundColor: DEFAULT_ACCENT_COLOR,
-    borderRadius: 10,
-    paddingVertical: 10,
-    alignItems: "center",
-  },
+      marginTop: 12,
+      backgroundColor:
+        DEFAULT_ACCENT_COLOR,
+      borderRadius: 10,
+      paddingVertical: 10,
+      alignItems:
+        "center",
+    },
 
-  permissionButtonPressed: {
-    opacity: 0.75,
-  },
+    permissionButtonPressed: {
+      opacity: 0.75,
+    },
 
-  permissionButtonText: {
-    color: BACKGROUND,
-    fontSize: 14,
-    fontWeight: "700",
-  },
-});
+    permissionButtonText: {
+      color: BACKGROUND,
+      fontSize: 14,
+      fontWeight: "700",
+    },
+  });
