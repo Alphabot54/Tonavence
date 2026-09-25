@@ -103,14 +103,6 @@ export function detectPitch(
     return null;
   }
 
-  /*
-   * Guitar range:
-   *
-   * Low E ≈ 82 Hz
-   * High E ≈ 330 Hz
-   *
-   * We allow a little more range for other instruments.
-   */
   const minFrequency = 60;
   const maxFrequency = 1000;
 
@@ -121,10 +113,10 @@ export function detectPitch(
     return null;
   }
 
-  let bestLag = -1;
-  let bestCorrelation = 0;
-
-  for (let lag = minLag; lag <= maxLag; lag++) {
+  // Normalized correlation at a single lag.
+  // This is the expensive O(N) operation we want to
+  // call as few times as possible.
+  const normalizedCorrelationAt = (lag: number): number => {
     let correlation = 0;
     let energyA = 0;
     let energyB = 0;
@@ -139,12 +131,55 @@ export function detectPitch(
     }
 
     if (energyA === 0 || energyB === 0) {
-      continue;
+      return 0;
     }
 
-    const normalized =
-      correlation /
-      Math.sqrt(energyA * energyB);
+    return correlation / Math.sqrt(energyA * energyB);
+  };
+
+  // ── Pass 1: coarse search ──
+  // Sample every COARSE_STEP-th lag to cheaply find
+  // roughly where the true peak lives.
+  const COARSE_STEP = 6;
+
+  let coarseBestLag = -1;
+  let coarseBestCorrelation = 0;
+
+  for (
+    let lag = minLag;
+    lag <= maxLag;
+    lag += COARSE_STEP
+  ) {
+    const normalized = normalizedCorrelationAt(lag);
+
+    if (normalized > coarseBestCorrelation) {
+      coarseBestCorrelation = normalized;
+      coarseBestLag = lag;
+    }
+  }
+
+  if (coarseBestLag === -1) {
+    return null;
+  }
+
+  // ── Pass 2: fine search ──
+  // Sweep every lag in a small window around the coarse
+  // peak, at full resolution.
+  const fineStart = Math.max(
+    minLag,
+    coarseBestLag - COARSE_STEP
+  );
+
+  const fineEnd = Math.min(
+    maxLag,
+    coarseBestLag + COARSE_STEP
+  );
+
+  let bestLag = -1;
+  let bestCorrelation = 0;
+
+  for (let lag = fineStart; lag <= fineEnd; lag++) {
+    const normalized = normalizedCorrelationAt(lag);
 
     if (normalized > bestCorrelation) {
       bestCorrelation = normalized;
@@ -163,10 +198,7 @@ export function detectPitch(
    */
   let refinedLag = bestLag;
 
-  if (
-    bestLag > minLag &&
-    bestLag < maxLag
-  ) {
+  if (bestLag > minLag && bestLag < maxLag) {
     const correlationAt = (lag: number) => {
       let correlation = 0;
 
@@ -181,12 +213,10 @@ export function detectPitch(
     const center = correlationAt(bestLag);
     const right = correlationAt(bestLag + 1);
 
-    const denominator =
-      2 * (2 * center - left - right);
+    const denominator = 2 * (2 * center - left - right);
 
     if (denominator !== 0) {
-      refinedLag +=
-        (left - right) / denominator;
+      refinedLag += (left - right) / denominator;
     }
   }
 

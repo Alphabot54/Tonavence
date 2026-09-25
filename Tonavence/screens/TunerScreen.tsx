@@ -11,12 +11,15 @@ export default function TunerScreen() {
     <SafeAreaView edges={["top"]} style={styles.container}>
       <View style={styles.headerContainer}>
         <Pressable
-          onPress={() => {
-            console.log("BACK BUTTON PRESSED");
-            router.back();
-          }}
+          onPress={() => router.back()}
+          style={styles.backButton}
+          hitSlop={10}
         >
-          <Ionicons name="arrow-back" size={28} color="white" />
+          <Ionicons 
+            name="chevron-back"
+            size={28}
+            color="#111"
+          />
         </Pressable>
 
         <Text style={styles.headerTitle}>Tuner</Text>

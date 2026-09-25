@@ -47,6 +47,17 @@ const REFERENCE_STEP = 1;
 
 const TUNED_CENTS = 3;
 
+// Number of recent pitch measurements used
+// to smooth the displayed cents value.
+const PITCH_HISTORY_SIZE = 5;
+
+// Number of consecutive detections of a new note
+// before switching the displayed note.
+const NOTE_SWITCH_DETECTIONS = 2;
+
+// Number of null frames before clearing the display.
+const NULL_FRAMES_TO_CLEAR = 10;
+
 const BAR_HEIGHTS = [
   18,
   28,
@@ -55,21 +66,30 @@ const BAR_HEIGHTS = [
   74,
 ];
 
-// Number of recent valid pitch detections
-// used for smoothing.
-const PITCH_HISTORY_SIZE = 5;
+// ─────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────
 
-// Number of matching detections required
-// before accepting a note.
-const MIN_STABLE_DETECTIONS = 3;
+type AudioFrame = {
+  pcmBase64: string;
+  sampleRate: number;
+  timestamp: number;
+  level?: number;
+};
 
-// Number of consecutive detections required
-// before switching from one note to another.
-const NOTE_SWITCH_DETECTIONS = 2;
+type PitchResult = {
+  note: string;
+  octave: number;
+  frequency: number;
+  cents: number;
+};
 
-// Number of consecutive null frames before
-// clearing the tuner display.
-const NULL_FRAMES_TO_CLEAR = 8;
+type DisplayedPitch = {
+  note: string;
+  octave: number;
+  frequency: number;
+  cents: number;
+};
 
 // ─────────────────────────────────────────────
 // PCM16 → Float32
@@ -78,14 +98,6 @@ const NULL_FRAMES_TO_CLEAR = 8;
 function pcm16Base64ToFloat32(
   base64: string
 ): Float32Array {
-  /*
-   * PCM16 = 2 bytes per sample.
-   *
-   * The expo-stream-audio package sends:
-   *
-   * signed 16-bit little-endian PCM
-   */
-
   const binaryString = atob(base64);
 
   const byteLength = binaryString.length;
@@ -100,23 +112,19 @@ function pcm16Base64ToFloat32(
 
   const view = new DataView(buffer);
 
-  const sampleCount =
-    Math.floor(byteLength / 2);
+  const sampleCount = Math.floor(
+    byteLength / 2
+  );
 
-  const samples =
-    new Float32Array(sampleCount);
+  const samples = new Float32Array(
+    sampleCount
+  );
 
   for (let i = 0; i < sampleCount; i++) {
-    const int16 =
-      view.getInt16(i * 2, true);
-
-    /*
-     * Convert:
-     *
-     * -32768 → approximately -1
-     *      0 → 0
-     *  32767 → approximately +1
-     */
+    const int16 = view.getInt16(
+      i * 2,
+      true
+    );
 
     samples[i] = int16 / 32768;
   }
@@ -139,8 +147,9 @@ function getMedian(
     (a, b) => a - b
   );
 
-  const middle =
-    Math.floor(sorted.length / 2);
+  const middle = Math.floor(
+    sorted.length / 2
+  );
 
   if (sorted.length % 2 === 0) {
     return (
@@ -160,6 +169,10 @@ function getMedian(
 export default function Tuner() {
   console.log("TUNER COMPONENT LOADED");
 
+  // ─────────────────────────────────────────────
+  // Audio subscriptions
+  // ─────────────────────────────────────────────
+
   const frameSubscriptionRef =
     useRef<{
       remove: () => void;
@@ -177,29 +190,17 @@ export default function Tuner() {
     useRef(false);
 
   // ─────────────────────────────────────────────
-  // Pitch smoothing refs
+  // Pitch processing refs
   // ─────────────────────────────────────────────
 
   const pitchHistoryRef =
-    useRef<
-      {
-        note: string;
-        octave: number;
-        frequency: number;
-        cents: number;
-      }[]
-    >([]);
+    useRef<PitchResult[]>([]);
 
   const nullFrameCountRef =
     useRef(0);
 
   const displayedPitchRef =
-    useRef<{
-      note: string;
-      octave: number;
-      frequency: number;
-      cents: number;
-    } | null>(null);
+    useRef<DisplayedPitch | null>(null);
 
   const pendingPitchRef =
     useRef<{
@@ -224,11 +225,15 @@ export default function Tuner() {
   const [showOctave, setShowOctave] =
     useState(true);
 
-  const [referenceFrequency, setReferenceFrequency] =
-    useState(440);
+  const [
+    referenceFrequency,
+    setReferenceFrequency,
+  ] = useState(440);
 
-  const [showReferenceModal, setShowReferenceModal] =
-    useState(false);
+  const [
+    showReferenceModal,
+    setShowReferenceModal,
+  ] = useState(false);
 
   const [hasPermission, setHasPermission] =
     useState(false);
@@ -246,16 +251,131 @@ export default function Tuner() {
   }, [referenceFrequency]);
 
   // ─────────────────────────────────────────────
-  // Audio processing
+  // Update displayed pitch
+  // ─────────────────────────────────────────────
+
+  const updateDisplayedPitch = useCallback(
+    (result: PitchResult) => {
+      const current =
+        displayedPitchRef.current;
+
+      // If there is currently no displayed
+      // note, show this pitch immediately.
+      if (!current) {
+        displayedPitchRef.current = {
+          note: result.note,
+          octave: result.octave,
+          frequency: result.frequency,
+          cents: result.cents,
+        };
+
+        setNote(result.note);
+        setOctave(result.octave);
+        setCents(result.cents);
+
+        return;
+      }
+
+      const sameNote =
+        current.note === result.note &&
+        current.octave === result.octave;
+
+      // Same note:
+      // update the tuning information immediately.
+      if (sameNote) {
+        pendingPitchRef.current = null;
+
+        pitchHistoryRef.current.push(
+          result
+        );
+
+        if (
+          pitchHistoryRef.current.length >
+          PITCH_HISTORY_SIZE
+        ) {
+          pitchHistoryRef.current.shift();
+        }
+
+        const medianFrequency =
+          getMedian(
+            pitchHistoryRef.current.map(
+              pitch => pitch.frequency
+            )
+          );
+
+        const medianCents =
+          getMedian(
+            pitchHistoryRef.current.map(
+              pitch => pitch.cents
+            )
+          );
+
+        displayedPitchRef.current = {
+          note: result.note,
+          octave: result.octave,
+          frequency: medianFrequency,
+          cents: medianCents,
+        };
+
+        setNote(result.note);
+        setOctave(result.octave);
+        setCents(medianCents);
+
+        return;
+      }
+
+      // Different note:
+      // don't immediately jump to it.
+      if (
+        pendingPitchRef.current &&
+        pendingPitchRef.current.note ===
+          result.note &&
+        pendingPitchRef.current.octave ===
+          result.octave
+      ) {
+        pendingPitchRef.current.count += 1;
+      } else {
+        pendingPitchRef.current = {
+          note: result.note,
+          octave: result.octave,
+          count: 1,
+        };
+      }
+
+      if (
+        pendingPitchRef.current.count <
+        NOTE_SWITCH_DETECTIONS
+      ) {
+        return;
+      }
+
+      // Accept the new note.
+      displayedPitchRef.current = {
+        note: result.note,
+        octave: result.octave,
+        frequency: result.frequency,
+        cents: result.cents,
+      };
+
+      pitchHistoryRef.current = [
+        result,
+      ];
+
+      pendingPitchRef.current = null;
+
+      setNote(result.note);
+      setOctave(result.octave);
+      setCents(result.cents);
+    },
+    []
+  );
+
+  // ─────────────────────────────────────────────
+  // Process audio frame
   // ─────────────────────────────────────────────
 
   const processAudioFrame = useCallback(
-    (frame: {
-      pcmBase64: string;
-      sampleRate: number;
-      timestamp: number;
-      level?: number;
-    }) => {
+    (frame: AudioFrame) => {
       try {
         if (!frame.pcmBase64) {
           return;
@@ -270,12 +390,25 @@ export default function Tuner() {
           return;
         }
 
+        // const t0 = Date.now();
+
         const result =
           analyzePitch(
             samples,
             frame.sampleRate,
             referenceFrequencyRef.current
           );
+
+        // const dt = Date.now() - t0;
+
+        // if (dt > 20) {
+        //   console.log("SLOW FRAME:", dt, "ms");
+        // }
+
+        // console.log(
+        //   "PITCH RESULT:",
+        //   result
+        // );
 
         // ─────────────────────────────────────
         // No pitch detected
@@ -284,12 +417,6 @@ export default function Tuner() {
         if (!result) {
           nullFrameCountRef.current += 1;
 
-          /*
-           * Do not immediately clear the tuner.
-           *
-           * Individual audio frames can fail to produce
-           * a pitch even while the guitar is still ringing.
-           */
           if (
             nullFrameCountRef.current >=
             NULL_FRAMES_TO_CLEAR
@@ -297,11 +424,9 @@ export default function Tuner() {
             displayedPitchRef.current =
               null;
 
-            pitchHistoryRef.current =
-              [];
+            pitchHistoryRef.current = [];
 
-            pendingPitchRef.current =
-              null;
+            pendingPitchRef.current = null;
 
             setNote(null);
             setOctave(null);
@@ -311,250 +436,13 @@ export default function Tuner() {
           return;
         }
 
-        // We received a valid pitch.
+        // ─────────────────────────────────────
+        // Valid pitch detected
+        // ─────────────────────────────────────
+
         nullFrameCountRef.current = 0;
 
-        // ─────────────────────────────────────
-        // Add pitch to history
-        // ─────────────────────────────────────
-
-        pitchHistoryRef.current.push({
-          note: result.note,
-          octave: result.octave,
-          frequency: result.frequency,
-          cents: result.cents,
-        });
-
-        /*
-         * Keep only the most recent five
-         * valid detections.
-         */
-        if (
-          pitchHistoryRef.current.length >
-          PITCH_HISTORY_SIZE
-        ) {
-          pitchHistoryRef.current.shift();
-        }
-
-        const history =
-          pitchHistoryRef.current;
-
-        // ─────────────────────────────────────
-        // Group detections by note + octave
-        // ─────────────────────────────────────
-
-        const groups = new Map<
-          string,
-          {
-            note: string;
-            octave: number;
-            frequency: number;
-            cents: number;
-          }[]
-        >();
-
-        for (const pitch of history) {
-          const key =
-            `${pitch.note}${pitch.octave}`;
-
-          if (!groups.has(key)) {
-            groups.set(key, []);
-          }
-
-          groups
-            .get(key)!
-            .push(pitch);
-        }
-
-        // ─────────────────────────────────────
-        // Find most common note
-        // ─────────────────────────────────────
-
-        let bestGroup:
-          | {
-              note: string;
-              octave: number;
-              frequency: number;
-              cents: number;
-            }[]
-          | null = null;
-
-        for (const group of groups.values()) {
-          if (
-            !bestGroup ||
-            group.length >
-              bestGroup.length
-          ) {
-            bestGroup = group;
-          }
-        }
-
-        /*
-         * We need at least three matching
-         * detections before accepting the pitch.
-         */
-        if (
-          !bestGroup ||
-          bestGroup.length <
-            MIN_STABLE_DETECTIONS
-        ) {
-          return;
-        }
-
-        const stableNote =
-          bestGroup[0].note;
-
-        const stableOctave =
-          bestGroup[0].octave;
-
-        // ─────────────────────────────────────
-        // Prevent sudden note jumps
-        // ─────────────────────────────────────
-
-        const currentPitch =
-          displayedPitchRef.current;
-
-        if (
-          currentPitch &&
-          (
-            currentPitch.note !==
-              stableNote ||
-            currentPitch.octave !==
-              stableOctave
-          )
-        ) {
-          /*
-           * We detected a different note.
-           *
-           * Require it to appear again before
-           * switching the displayed note.
-           */
-          if (
-            pendingPitchRef.current &&
-            pendingPitchRef.current.note ===
-              stableNote &&
-            pendingPitchRef.current.octave ===
-              stableOctave
-          ) {
-            pendingPitchRef.current.count += 1;
-          } else {
-            pendingPitchRef.current = {
-              note: stableNote,
-              octave: stableOctave,
-              count: 1,
-            };
-          }
-
-          if (
-            pendingPitchRef.current.count <
-            NOTE_SWITCH_DETECTIONS
-          ) {
-            return;
-          }
-
-          pendingPitchRef.current = null;
-        }
-
-        pendingPitchRef.current = null;
-
-        // ─────────────────────────────────────
-        // Median frequency
-        // ─────────────────────────────────────
-
-        /*
-         * Use the median instead of the latest
-         * frequency to remove occasional noisy
-         * measurements.
-         */
-        const medianFrequency =
-          getMedian(
-            bestGroup.map(
-              pitch => pitch.frequency
-            )
-          );
-
-        // ─────────────────────────────────────
-        // Calculate target frequency
-        // ─────────────────────────────────────
-
-        const noteNames = [
-          "C",
-          "C#",
-          "D",
-          "D#",
-          "E",
-          "F",
-          "F#",
-          "G",
-          "G#",
-          "A",
-          "A#",
-          "B",
-        ];
-
-        const noteIndex =
-          noteNames.indexOf(
-            stableNote
-          );
-
-        if (noteIndex === -1) {
-          return;
-        }
-
-        /*
-         * MIDI number:
-         *
-         * C4 = 60
-         * A4 = 69
-         */
-        const midiNumber =
-          (stableOctave + 1) * 12 +
-          noteIndex;
-
-        const targetFrequency =
-          referenceFrequencyRef.current *
-          Math.pow(
-            2,
-            (midiNumber - 69) / 12
-          );
-
-        // ─────────────────────────────────────
-        // Calculate smoothed cents
-        // ─────────────────────────────────────
-
-        const smoothedCents =
-          1200 *
-          Math.log2(
-            medianFrequency /
-              targetFrequency
-          );
-
-        const finalPitch = {
-          note: stableNote,
-          octave: stableOctave,
-          frequency:
-            medianFrequency,
-          cents: smoothedCents,
-        };
-
-        // ─────────────────────────────────────
-        // Update display
-        // ─────────────────────────────────────
-
-        displayedPitchRef.current =
-          finalPitch;
-
-        setNote(
-          finalPitch.note
-        );
-
-        setOctave(
-          finalPitch.octave
-        );
-
-        setCents(
-          finalPitch.cents
-        );
+        updateDisplayedPitch(result);
       } catch (error) {
         console.warn(
           "ERROR PROCESSING TUNER AUDIO:",
@@ -562,7 +450,7 @@ export default function Tuner() {
         );
       }
     },
-    []
+    [updateDisplayedPitch]
   );
 
   // ─────────────────────────────────────────────
@@ -570,14 +458,10 @@ export default function Tuner() {
   // ─────────────────────────────────────────────
 
   const requestMicrophonePermission =
-    async (): Promise<boolean> => {
+    useCallback(async (): Promise<boolean> => {
       try {
         console.log(
           "REQUEST MICROPHONE PERMISSION CALLED"
-        );
-
-        console.log(
-          "ABOUT TO CALL requestPermission()"
         );
 
         const permission =
@@ -588,9 +472,7 @@ export default function Tuner() {
           permission
         );
 
-        if (
-          permission !== "granted"
-        ) {
+        if (permission !== "granted") {
           console.log(
             "MICROPHONE PERMISSION DENIED"
           );
@@ -617,10 +499,10 @@ export default function Tuner() {
 
         return false;
       }
-    };
+    }, []);
 
   // ─────────────────────────────────────────────
-  // Microphone stream
+  // Start microphone
   // ─────────────────────────────────────────────
 
   const startMicrophone =
@@ -640,10 +522,28 @@ export default function Tuner() {
         return;
       }
 
-      isStartingRef.current =
-        true;
+      isStartingRef.current = true;
 
       try {
+        // Clean up old listeners first.
+        if (
+          frameSubscriptionRef.current
+        ) {
+          frameSubscriptionRef.current.remove();
+
+          frameSubscriptionRef.current =
+            null;
+        }
+
+        if (
+          errorSubscriptionRef.current
+        ) {
+          errorSubscriptionRef.current.remove();
+
+          errorSubscriptionRef.current =
+            null;
+        }
+
         console.log(
           "ADDING FRAME LISTENER"
         );
@@ -692,11 +592,8 @@ export default function Tuner() {
           "START() COMPLETED"
         );
 
-        isListeningRef.current =
-          true;
-
-        isStartingRef.current =
-          false;
+        isListeningRef.current = true;
+        isStartingRef.current = false;
 
         console.log(
           "MICROPHONE IS NOW LISTENING"
@@ -725,11 +622,8 @@ export default function Tuner() {
             null;
         }
 
-        isListeningRef.current =
-          false;
-
-        isStartingRef.current =
-          false;
+        isListeningRef.current = false;
+        isStartingRef.current = false;
       }
     }, [processAudioFrame]);
 
@@ -739,49 +633,50 @@ export default function Tuner() {
 
   const stopMicrophone =
     useCallback(async () => {
+      console.log(
+        "STOPPING MICROPHONE"
+      );
+
       try {
-        if (
-          frameSubscriptionRef.current
-        ) {
-          frameSubscriptionRef.current.remove();
-
-          frameSubscriptionRef.current =
-            null;
-        }
-
-        if (
-          errorSubscriptionRef.current
-        ) {
-          errorSubscriptionRef.current.remove();
-
-          errorSubscriptionRef.current =
-            null;
-        }
-
         if (
           isListeningRef.current
         ) {
           await stop();
         }
-
-        isListeningRef.current =
-          false;
-
-        isStartingRef.current =
-          false;
       } catch (error) {
         console.warn(
-          "UNABLE TO STOP TUNER:",
+          "ERROR STOPPING MICROPHONE:",
           error
         );
       }
+
+      if (
+        frameSubscriptionRef.current
+      ) {
+        frameSubscriptionRef.current.remove();
+
+        frameSubscriptionRef.current = null;
+      }
+
+      if (
+        errorSubscriptionRef.current
+      ) {
+        errorSubscriptionRef.current.remove();
+
+        errorSubscriptionRef.current = null;
+      }
+
+      isListeningRef.current = false;
+      isStartingRef.current = false;
     }, []);
 
   // ─────────────────────────────────────────────
-  // Initial permission request
+  // Initial microphone setup
   // ─────────────────────────────────────────────
 
   useEffect(() => {
+    let mounted = true;
+
     const initializeMicrophone =
       async () => {
         console.log(
@@ -796,7 +691,10 @@ export default function Tuner() {
           granted
         );
 
-        if (granted) {
+        if (
+          granted &&
+          mounted
+        ) {
           console.log(
             "PERMISSION GRANTED — STARTING MICROPHONE"
           );
@@ -812,9 +710,12 @@ export default function Tuner() {
     void initializeMicrophone();
 
     return () => {
+      mounted = false;
+
       void stopMicrophone();
     };
   }, [
+    requestMicrophonePermission,
     startMicrophone,
     stopMicrophone,
   ]);
@@ -825,43 +726,39 @@ export default function Tuner() {
 
   const isInTune =
     cents !== null &&
-    Math.abs(cents) <=
-      TUNED_CENTS;
+    Math.abs(cents) <= TUNED_CENTS;
 
-  const getBarLevel =
-    (): number => {
-      if (cents === null) {
-        return 0;
-      }
-
-      const distance =
-        Math.abs(cents);
-
-      if (distance <= 3) {
-        return 5;
-      }
-
-      if (distance <= 7) {
-        return 4;
-      }
-
-      if (distance <= 12) {
-        return 3;
-      }
-
-      if (distance <= 20) {
-        return 2;
-      }
-
-      if (distance <= 35) {
-        return 1;
-      }
-
+  const getBarLevel = (): number => {
+    if (cents === null) {
       return 0;
-    };
+    }
 
-  const barLevel =
-    getBarLevel();
+    const distance = Math.abs(cents);
+
+    if (distance <= 3) {
+      return 5;
+    }
+
+    if (distance <= 7) {
+      return 4;
+    }
+
+    if (distance <= 12) {
+      return 3;
+    }
+
+    if (distance <= 20) {
+      return 2;
+    }
+
+    if (distance <= 35) {
+      return 1;
+    }
+
+    return 0;
+  };
+
+  const barLevel = getBarLevel();
 
   const getBarColor = (
     index: number,
@@ -886,28 +783,14 @@ export default function Tuner() {
   // Build bars
   // ─────────────────────────────────────────────
 
-  const buildBars = (
-    side: "left" | "right"
-  ) => {
-    const indexes =
-      side === "left"
-        ? [0, 1, 2, 3, 4]
-        : [4, 3, 2, 1, 0];
-
-    return indexes.map(
-      (
-        heightIndex,
-        index
-      ) => ({
-        heightIndex,
-        active:
-          index < barLevel,
-        color: getBarColor(
-          heightIndex,
-          index < barLevel
-        ),
-      })
-    );
+  const buildBars = (side: "left" | "right") => {
+    const indexes = side === "left" ? [0, 1, 2, 3, 4] : [4, 3, 2, 1, 0];
+    return indexes.map((heightIndex, position) => {
+      const distanceFromCenter =
+        side === "left" ? indexes.length - 1 - position : position;
+      const active = distanceFromCenter < barLevel;
+      return { heightIndex, active, color: getBarColor(heightIndex, active) };
+    });
   };
 
   const leftBars =
@@ -920,29 +803,25 @@ export default function Tuner() {
   // Reference frequency controls
   // ─────────────────────────────────────────────
 
-  const decreaseReference =
-    () => {
-      setReferenceFrequency(
-        current =>
-          Math.max(
-            MIN_REFERENCE_FREQUENCY,
-            current -
-              REFERENCE_STEP
-          )
-      );
-    };
+  const decreaseReference = () => {
+    setReferenceFrequency(
+      current =>
+        Math.max(
+          MIN_REFERENCE_FREQUENCY,
+          current - REFERENCE_STEP
+        )
+    );
+  };
 
-  const increaseReference =
-    () => {
-      setReferenceFrequency(
-        current =>
-          Math.min(
-            MAX_REFERENCE_FREQUENCY,
-            current +
-              REFERENCE_STEP
-          )
-      );
-    };
+  const increaseReference = () => {
+    setReferenceFrequency(
+      current =>
+        Math.min(
+          MAX_REFERENCE_FREQUENCY,
+          current + REFERENCE_STEP
+        )
+    );
+  };
 
   // ─────────────────────────────────────────────
   // Display
@@ -952,9 +831,9 @@ export default function Tuner() {
     note === null
       ? "-"
       : showOctave &&
-          octave !== null
-        ? `${note}${octave}`
-        : note;
+        octave !== null
+      ? `${note}${octave}`
+      : note;
 
   const displayedCents =
     cents === null
@@ -966,16 +845,10 @@ export default function Tuner() {
   // ─────────────────────────────────────────────
 
   return (
-    <View
-      style={styles.container}
-    >
-      {/* ─────────────────────────────── */}
-      {/* Main tuner */}
-      {/* ─────────────────────────────── */}
+    <View style={styles.container}>
 
-      <View
-        style={styles.tunerArea}
-      >
+      <View style={styles.tunerArea}>
+
         <Text
           style={[
             styles.note,
@@ -986,21 +859,11 @@ export default function Tuner() {
           {displayedNote}
         </Text>
 
-        {/* Bars */}
+        <View style={styles.barRow}>
 
-        <View
-          style={styles.barRow}
-        >
-          {/* Left */}
-
-          <View
-            style={styles.sideBars}
-          >
+          <View style={styles.sideBars}>
             {leftBars.map(
-              (
-                bar,
-                index
-              ) => (
+              (bar, index) => (
                 <View
                   key={`left-${index}`}
                   style={[
@@ -1027,16 +890,9 @@ export default function Tuner() {
             style={styles.centerSpace}
           />
 
-          {/* Right */}
-
-          <View
-            style={styles.sideBars}
-          >
+          <View style={styles.sideBars}>
             {rightBars.map(
-              (
-                bar,
-                index
-              ) => (
+              (bar, index) => (
                 <View
                   key={`right-${index}`}
                   style={[
@@ -1058,18 +914,17 @@ export default function Tuner() {
               )
             )}
           </View>
-        </View>
 
-        {/* Cents */}
+        </View>
 
         <View
           style={styles.centsRow}
         >
+
           <View
             style={styles.centsSide}
           >
-            {displayedCents !==
-              null &&
+            {displayedCents !== null &&
               displayedCents <
                 -TUNED_CENTS && (
                 <Text
@@ -1089,8 +944,7 @@ export default function Tuner() {
           <View
             style={styles.centsSide}
           >
-            {displayedCents !==
-              null &&
+            {displayedCents !== null &&
               displayedCents >
                 TUNED_CENTS && (
                 <Text
@@ -1102,29 +956,22 @@ export default function Tuner() {
                 </Text>
               )}
           </View>
+
         </View>
+
       </View>
 
-      {/* ─────────────────────────────── */}
       {/* Bottom controls */}
-      {/* ─────────────────────────────── */}
 
       <View
-        style={
-          styles.bottomControls
-        }
+        style={styles.bottomControls}
       >
-        {/* Reference */}
 
         <Pressable
           onPress={() =>
-            setShowReferenceModal(
-              true
-            )
+            setShowReferenceModal(true)
           }
-          style={({
-            pressed,
-          }) => [
+          style={({ pressed }) => [
             styles.referenceButton,
             pressed &&
               styles.referenceButtonPressed,
@@ -1139,27 +986,20 @@ export default function Tuner() {
           </Text>
         </Pressable>
 
-        {/* Octave */}
-
         <Pressable
           onPress={() =>
             setShowOctave(
-              current =>
-                !current
+              current => !current
             )
           }
-          style={({
-            pressed,
-          }) => [
+          style={({ pressed }) => [
             styles.octaveButton,
             pressed &&
               styles.octaveButtonPressed,
           ]}
         >
           <Text
-            style={
-              styles.octaveText
-            }
+            style={styles.octaveText}
           >
             Octave:{" "}
             {showOctave
@@ -1167,11 +1007,10 @@ export default function Tuner() {
               : "Off"}
           </Text>
         </Pressable>
+
       </View>
 
-      {/* ─────────────────────────────── */}
       {/* Reference modal */}
-      {/* ─────────────────────────────── */}
 
       <Modal
         visible={
@@ -1180,9 +1019,7 @@ export default function Tuner() {
         transparent
         animationType="fade"
         onRequestClose={() =>
-          setShowReferenceModal(
-            false
-          )
+          setShowReferenceModal(false)
         }
       >
         <View
@@ -1195,6 +1032,7 @@ export default function Tuner() {
               styles.referenceModal
             }
           >
+
             <Text
               style={
                 styles.modalTitle
@@ -1216,6 +1054,7 @@ export default function Tuner() {
                 styles.frequencyRow
               }
             >
+
               <Pressable
                 onPress={
                   decreaseReference
@@ -1249,8 +1088,7 @@ export default function Tuner() {
                   styles.frequencyValue
                 }
               >
-                {referenceFrequency}{" "}
-                Hz
+                {referenceFrequency} Hz
               </Text>
 
               <Pressable
@@ -1280,6 +1118,7 @@ export default function Tuner() {
                   +
                 </Text>
               </Pressable>
+
             </View>
 
             <Text
@@ -1290,8 +1129,7 @@ export default function Tuner() {
               Range:{" "}
               {MIN_REFERENCE_FREQUENCY}
               –
-              {MAX_REFERENCE_FREQUENCY}{" "}
-              Hz
+              {MAX_REFERENCE_FREQUENCY} Hz
             </Text>
 
             <Pressable
@@ -1300,9 +1138,7 @@ export default function Tuner() {
                   false
                 )
               }
-              style={({
-                pressed,
-              }) => [
+              style={({ pressed }) => [
                 styles.doneButton,
                 pressed &&
                   styles.doneButtonPressed,
@@ -1316,13 +1152,12 @@ export default function Tuner() {
                 Done
               </Text>
             </Pressable>
+
           </View>
         </View>
       </Modal>
 
-      {/* ─────────────────────────────── */}
-      {/* Permission */}
-      {/* ─────────────────────────────── */}
+      {/* Permission overlay */}
 
       {!hasPermission && (
         <View
@@ -1348,9 +1183,7 @@ export default function Tuner() {
                 await startMicrophone();
               }
             }}
-            style={({
-              pressed,
-            }) => [
+            style={({ pressed }) => [
               styles.permissionButton,
               pressed &&
                 styles.permissionButtonPressed,
@@ -1366,6 +1199,7 @@ export default function Tuner() {
           </Pressable>
         </View>
       )}
+
     </View>
   );
 }
@@ -1374,307 +1208,245 @@ export default function Tuner() {
 // Styles
 // ─────────────────────────────────────────────
 
-const styles =
-  StyleSheet.create({
-    container: {
-      flex: 1,
-      backgroundColor:
-        BACKGROUND,
-    },
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: BACKGROUND,
+  },
 
-    tunerArea: {
-      flex: 1,
-      alignItems:
-        "center",
-      justifyContent:
-        "center",
-      paddingBottom: 80,
-    },
+  tunerArea: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingBottom: 80,
+  },
 
-    note: {
-      fontSize: 72,
-      fontWeight: "600",
-      color: TEXT,
-      letterSpacing: 1,
-      marginBottom: 34,
-    },
+  note: {
+    fontSize: 72,
+    fontWeight: "600",
+    color: TEXT,
+    letterSpacing: 1,
+    marginBottom: 34,
+  },
 
-    noteTuned: {
-      color: TUNED_COLOR,
-    },
+  noteTuned: {
+    color: TUNED_COLOR,
+  },
 
-    barRow: {
-      width: "100%",
-      flexDirection:
-        "row",
-      alignItems:
-        "center",
-      justifyContent:
-        "center",
-      paddingHorizontal: 18,
-    },
+  barRow: {
+    width: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 18,
+  },
 
-    sideBars: {
-      flex: 1,
-      flexDirection:
-        "row",
-      alignItems:
-        "center",
-      justifyContent:
-        "center",
-      gap: 6,
-    },
+  sideBars: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+  },
 
-    centerSpace: {
-      width: 18,
-    },
+  centerSpace: {
+    width: 18,
+  },
 
-    bar: {
-      width: 7,
-      borderRadius: 4,
-    },
+  bar: {
+    width: 7,
+    borderRadius: 4,
+  },
 
-    centsRow: {
-      width: "100%",
-      flexDirection:
-        "row",
-      alignItems:
-        "center",
-      justifyContent:
-        "center",
-      paddingHorizontal: 18,
-      marginTop: 18,
-    },
+  centsRow: {
+    width: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 18,
+    marginTop: 18,
+  },
 
-    centsSide: {
-      flex: 1,
-      minHeight: 24,
-      alignItems:
-        "center",
-    },
+  centsSide: {
+    flex: 1,
+    minHeight: 24,
+    alignItems: "center",
+  },
 
-    centsText: {
-      color: MUTED,
-      fontSize: 17,
-      fontVariant: [
-        "tabular-nums",
-      ],
-    },
+  centsText: {
+    color: MUTED,
+    fontSize: 17,
+    fontVariant: ["tabular-nums"],
+  },
 
-    bottomControls: {
-      position:
-        "absolute",
-      left: 0,
-      right: 0,
-      bottom: 24,
-      paddingHorizontal: 20,
-      flexDirection:
-        "row",
-      justifyContent:
-        "space-between",
-      alignItems:
-        "center",
-    },
+  bottomControls: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 24,
+    paddingHorizontal: 20,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
 
-    referenceButton: {
-      backgroundColor:
-        SURFACE,
-      borderRadius: 10,
-      paddingHorizontal: 14,
-      paddingVertical: 10,
-      borderWidth: 1,
-      borderColor:
-        SURFACE_2,
-    },
+  referenceButton: {
+    backgroundColor: SURFACE,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 10,
+  },
 
-    referenceButtonPressed: {
-      backgroundColor:
-        SURFACE_2,
-    },
+  referenceButtonPressed: {
+    backgroundColor: SURFACE_2,
+  },
 
-    referenceText: {
-      color: TEXT,
-      fontSize: 14,
-      fontWeight: "500",
-    },
+  referenceText: {
+    color: TEXT,
+    fontSize: 14,
+  },
 
-    octaveButton: {
-      backgroundColor:
-        SURFACE,
-      borderRadius: 10,
-      paddingHorizontal: 14,
-      paddingVertical: 10,
-      borderWidth: 1,
-      borderColor:
-        SURFACE_2,
-    },
+  octaveButton: {
+    backgroundColor: SURFACE,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 10,
+  },
 
-    octaveButtonPressed: {
-      backgroundColor:
-        SURFACE_2,
-    },
+  octaveButtonPressed: {
+    backgroundColor: SURFACE_2,
+  },
 
-    octaveText: {
-      color: MUTED,
-      fontSize: 14,
-      fontWeight: "500",
-    },
+  octaveText: {
+    color: TEXT,
+    fontSize: 14,
+  },
 
-    // ─────────────────────────────────────────────
-    // Modal
-    // ─────────────────────────────────────────────
+  modalOverlay: {
+    flex: 1,
+    backgroundColor:
+      "rgba(0, 0, 0, 0.65)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
 
-    modalOverlay: {
-      flex: 1,
-      backgroundColor:
-        "rgba(0, 0, 0, 0.65)",
-      alignItems:
-        "center",
-      justifyContent:
-        "center",
-      paddingHorizontal: 28,
-    },
+  referenceModal: {
+    width: "82%",
+    backgroundColor: SURFACE,
+    borderRadius: 18,
+    padding: 24,
+    alignItems: "center",
+  },
 
-    referenceModal: {
-      width: "100%",
-      maxWidth: 360,
-      backgroundColor:
-        SURFACE,
-      borderRadius: 18,
-      padding: 24,
-      borderWidth: 1,
-      borderColor:
-        SURFACE_2,
-    },
+  modalTitle: {
+    color: TEXT,
+    fontSize: 22,
+    fontWeight: "600",
+  },
 
-    modalTitle: {
-      color: TEXT,
-      fontSize: 22,
-      fontWeight: "600",
-      textAlign:
-        "center",
-    },
+  modalSubtitle: {
+    color: MUTED,
+    fontSize: 14,
+    marginTop: 6,
+  },
 
-    modalSubtitle: {
-      color: MUTED,
-      fontSize: 14,
-      textAlign:
-        "center",
-      marginTop: 6,
-    },
+  frequencyRow: {
+    width: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 24,
+  },
 
-    frequencyRow: {
-      flexDirection:
-        "row",
-      alignItems:
-        "center",
-      justifyContent:
-        "space-between",
-      marginTop: 28,
-    },
+  adjustButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: SURFACE_2,
+    alignItems: "center",
+    justifyContent: "center",
+  },
 
-    adjustButton: {
-      width: 48,
-      height: 48,
-      borderRadius: 12,
-      backgroundColor:
-        SURFACE_2,
-      alignItems:
-        "center",
-      justifyContent:
-        "center",
-    },
+  adjustButtonPressed: {
+    opacity: 0.7,
+  },
 
-    adjustButtonPressed: {
-      opacity: 0.7,
-    },
+  adjustButtonDisabled: {
+    opacity: 0.35,
+  },
 
-    adjustButtonDisabled: {
-      opacity: 0.3,
-    },
+  adjustText: {
+    color: TEXT,
+    fontSize: 28,
+    fontWeight: "400",
+  },
 
-    adjustText: {
-      color: TEXT,
-      fontSize: 30,
-      fontWeight: "300",
-    },
+  frequencyValue: {
+    color: TEXT,
+    fontSize: 20,
+    fontWeight: "500",
+  },
 
-    frequencyValue: {
-      color: TEXT,
-      fontSize: 28,
-      fontWeight: "600",
-      fontVariant: [
-        "tabular-nums",
-      ],
-    },
+  rangeText: {
+    color: MUTED,
+    fontSize: 13,
+    marginTop: 14,
+  },
 
-    rangeText: {
-      color: MUTED,
-      fontSize: 13,
-      textAlign:
-        "center",
-      marginTop: 12,
-    },
+  doneButton: {
+    width: "100%",
+    backgroundColor: DEFAULT_ACCENT_COLOR,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: "center",
+    marginTop: 22,
+  },
 
-    doneButton: {
-      marginTop: 24,
-      backgroundColor:
-        DEFAULT_ACCENT_COLOR,
-      borderRadius: 12,
-      paddingVertical: 13,
-      alignItems:
-        "center",
-    },
+  doneButtonPressed: {
+    opacity: 0.7,
+  },
 
-    doneButtonPressed: {
-      opacity: 0.75,
-    },
+  doneText: {
+    color: BACKGROUND,
+    fontSize: 16,
+    fontWeight: "600",
+  },
 
-    doneText: {
-      color: BACKGROUND,
-      fontSize: 16,
-      fontWeight: "700",
-    },
+  permissionOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: BACKGROUND,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 32,
+  },
 
-    permissionOverlay: {
-      position:
-        "absolute",
-      left: 20,
-      right: 20,
-      bottom: 80,
-      backgroundColor:
-        SURFACE,
-      borderRadius: 12,
-      padding: 14,
-      borderWidth: 1,
-      borderColor:
-        SURFACE_2,
-    },
+  permissionText: {
+    color: TEXT,
+    fontSize: 18,
+    textAlign: "center",
+    lineHeight: 26,
+    marginBottom: 24,
+  },
 
-    permissionText: {
-      color: MUTED,
-      fontSize: 14,
-      textAlign:
-        "center",
-    },
+  permissionButton: {
+    backgroundColor:
+      DEFAULT_ACCENT_COLOR,
+    paddingHorizontal: 22,
+    paddingVertical: 12,
+    borderRadius: 12,
+  },
 
-    permissionButton: {
-      marginTop: 12,
-      backgroundColor:
-        DEFAULT_ACCENT_COLOR,
-      borderRadius: 10,
-      paddingVertical: 10,
-      alignItems:
-        "center",
-    },
+  permissionButtonPressed: {
+    opacity: 0.7,
+  },
 
-    permissionButtonPressed: {
-      opacity: 0.75,
-    },
-
-    permissionButtonText: {
-      color: BACKGROUND,
-      fontSize: 14,
-      fontWeight: "700",
-    },
-  });
+  permissionButtonText: {
+    color: BACKGROUND,
+    fontSize: 16,
+    fontWeight: "600",
+  },
+});
