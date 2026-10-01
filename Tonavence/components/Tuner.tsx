@@ -167,7 +167,6 @@ function getMedian(
 // ─────────────────────────────────────────────
 
 export default function Tuner() {
-  console.log("TUNER COMPONENT LOADED");
 
   // ─────────────────────────────────────────────
   // Audio subscriptions
@@ -390,25 +389,12 @@ export default function Tuner() {
           return;
         }
 
-        // const t0 = Date.now();
-
         const result =
           analyzePitch(
             samples,
             frame.sampleRate,
             referenceFrequencyRef.current
           );
-
-        // const dt = Date.now() - t0;
-
-        // if (dt > 20) {
-        //   console.log("SLOW FRAME:", dt, "ms");
-        // }
-
-        // console.log(
-        //   "PITCH RESULT:",
-        //   result
-        // );
 
         // ─────────────────────────────────────
         // No pitch detected
@@ -460,31 +446,15 @@ export default function Tuner() {
   const requestMicrophonePermission =
     useCallback(async (): Promise<boolean> => {
       try {
-        console.log(
-          "REQUEST MICROPHONE PERMISSION CALLED"
-        );
-
         const permission =
           await requestPermission();
 
-        console.log(
-          "requestPermission() RETURNED:",
-          permission
-        );
-
         if (permission !== "granted") {
-          console.log(
-            "MICROPHONE PERMISSION DENIED"
-          );
 
           setHasPermission(false);
 
           return false;
         }
-
-        console.log(
-          "MICROPHONE PERMISSION GRANTED"
-        );
 
         setHasPermission(true);
 
@@ -507,17 +477,11 @@ export default function Tuner() {
 
   const startMicrophone =
     useCallback(async () => {
-      console.log(
-        "START MICROPHONE CALLED"
-      );
 
       if (
         isListeningRef.current ||
         isStartingRef.current
       ) {
-        console.log(
-          "MICROPHONE ALREADY STARTING OR LISTENING"
-        );
 
         return;
       }
@@ -544,22 +508,10 @@ export default function Tuner() {
             null;
         }
 
-        console.log(
-          "ADDING FRAME LISTENER"
-        );
-
         frameSubscriptionRef.current =
           addFrameListener(
             processAudioFrame
           );
-
-        console.log(
-          "FRAME LISTENER ADDED"
-        );
-
-        console.log(
-          "ADDING ERROR LISTENER"
-        );
 
         errorSubscriptionRef.current =
           addErrorListener(
@@ -573,14 +525,6 @@ export default function Tuner() {
             }
           );
 
-        console.log(
-          "ERROR LISTENER ADDED"
-        );
-
-        console.log(
-          "CALLING START()"
-        );
-
         await start({
           sampleRate: 44100,
           frameDurationMs: 50,
@@ -588,16 +532,9 @@ export default function Tuner() {
           enableLevelMeter: true,
         });
 
-        console.log(
-          "START() COMPLETED"
-        );
-
         isListeningRef.current = true;
         isStartingRef.current = false;
 
-        console.log(
-          "MICROPHONE IS NOW LISTENING"
-        );
       } catch (error) {
         console.error(
           "UNABLE TO START TUNER:",
@@ -633,9 +570,6 @@ export default function Tuner() {
 
   const stopMicrophone =
     useCallback(async () => {
-      console.log(
-        "STOPPING MICROPHONE"
-      );
 
       try {
         if (
@@ -679,31 +613,17 @@ export default function Tuner() {
 
     const initializeMicrophone =
       async () => {
-        console.log(
-          "TUNER USE EFFECT RUNNING"
-        );
 
         const granted =
           await requestMicrophonePermission();
-
-        console.log(
-          "PERMISSION FUNCTION RETURNED:",
-          granted
-        );
 
         if (
           granted &&
           mounted
         ) {
-          console.log(
-            "PERMISSION GRANTED — STARTING MICROPHONE"
-          );
 
           await startMicrophone();
 
-          console.log(
-            "START MICROPHONE FINISHED"
-          );
         }
       };
 

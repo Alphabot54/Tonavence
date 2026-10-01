@@ -25,7 +25,7 @@ export default function HomeScreen() {
   const router = useRouter();
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
+    <SafeAreaView style={styles.safeArea} edges={["top"]}>
       <View style={styles.container}>
 
         {/* Decorative polygons */}
@@ -100,7 +100,7 @@ export default function HomeScreen() {
               description="Build your technique"
               icon="fitness-outline"
               wide
-              onPress={() => router.push("/exercises")}
+              onPress={() => router.push("/exercise")}
             />
 
           </View>

@@ -12,7 +12,7 @@ import { Ionicons } from "@expo/vector-icons";
 
 const { width } = Dimensions.get("window");
 
-const ACCENT = "#4DD0E1";
+const DEFAULT_ACCENT_COLOR = "#4DD0E1";
 const BACKGROUND = "#0D0F12";
 const SURFACE = "#171A1F";
 const SURFACE_2 = "#20242A";
@@ -32,56 +32,62 @@ const exercises = [
 
 export default function ExercisesScreen() {
   return (
-    <SafeAreaView style={styles.container} edges={["top"]}>
-      <View style={styles.header}>
-        <Pressable
-          onPress={() => router.back()}
-          style={styles.backButton}
-          hitSlop={10}
-        >
-          <Ionicons name="chevron-back" size={28} color={TEXT} />
-        </Pressable>
+    <View style={styles.gradientContainer}>
+      <SafeAreaView style={styles.container} edges={["top"]}>
+        <View style={styles.header}>
+          <Pressable
+            onPress={() => router.back()}
+            style={styles.backButton}
+            hitSlop={10}
+          >
+            <Ionicons name="chevron-back" size={28} color={TEXT} />
+          </Pressable>
 
-        <Text style={styles.title}>Exercises</Text>
+          <Text style={styles.title}>Exercises</Text>
 
-        <View style={styles.headerSpacer} />
-      </View>
-
-      <View style={styles.body}>
-        <View style={styles.grid}>
-          {exercises.map((exercise) => (
-            <Pressable
-              key={exercise}
-              style={({ pressed }) => [
-                styles.exerciseCard,
-                pressed && styles.exerciseCardPressed,
-              ]}
-              onPress={() => {
-                // Individual exercise navigation will go here
-              }}
-            >
-              <View style={styles.cardShape} />
-
-              <Text style={styles.exerciseText}>{exercise}</Text>
-
-              <Ionicons
-                name="chevron-forward"
-                size={20}
-                color={MUTED}
-                style={styles.cardArrow}
-              />
-            </Pressable>
-          ))}
+          <View style={styles.headerSpacer} />
         </View>
-      </View>
-    </SafeAreaView>
+
+        <View style={styles.body}>
+          <View style={styles.grid}>
+            {exercises.map((exercise) => (
+              <Pressable
+                key={exercise}
+                style={({ pressed }) => [
+                  styles.exerciseCard,
+                  pressed && styles.exerciseCardPressed,
+                ]}
+                onPress={() => {
+                  // Individual exercise navigation will go here
+                }}
+              >
+                <View style={styles.cardShape} />
+
+                <Text style={styles.exerciseText}>{exercise}</Text>
+
+                <Ionicons
+                  name="chevron-forward"
+                  size={20}
+                  color={MUTED}
+                  style={styles.cardArrow}
+                />
+              </Pressable>
+            ))}
+          </View>
+        </View>
+      </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: BACKGROUND,
+  },
+
+  gradientContainer: {
+    flex: 1,
+    experimental_backgroundImage: `linear-gradient(0deg, ${DEFAULT_ACCENT_COLOR}, ${BACKGROUND})`
   },
 
   header: {

@@ -4,36 +4,46 @@ import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import PolygonMetronome from "../components/PolygonMetronome";
 
+const DEFAULT_ACCENT_COLOR = "#4DD0E1";
+const BACKGROUND = "#0D0F12";
+const TEXT = "#F2F4F7";
+
 export default function MetronomeScreen() {
   return (
-    <SafeAreaView edges={["top"]} style={styles.container}>
-      <View style={styles.headerContainer}>
-        <Pressable
-          onPress={() => router.back()}
-          style={styles.backButton}
-          hitSlop={10}
-        >
-          <Ionicons 
-            name="chevron-back"
-            size={28}
-            color="#111"
-          />
-        </Pressable>
+    <View style={styles.gradientContainer}>
+      <SafeAreaView edges={["top"]} style={styles.container}>
+        <View style={styles.headerContainer}>
+          <Pressable
+            onPress={() => router.back()}
+            style={styles.backButton}
+            hitSlop={10}
+          >
+            <Ionicons 
+              name="chevron-back"
+              size={28}
+              color={TEXT}
+            />
+          </Pressable>
 
-        <Text style={styles.headerTitle}>Metronome</Text>
-      </View>
-      <PolygonMetronome
-        initialBpm={100}
-        initialTimeSignature="4/4"
-      />
-    </SafeAreaView>
+          <Text style={styles.headerTitle}>Metronome</Text>
+        </View>
+        <PolygonMetronome
+          initialBpm={100}
+          initialTimeSignature="4/4"
+        />
+      </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#fff",
+  },
+
+  gradientContainer: {
+    flex: 1,
+    experimental_backgroundImage: `linear-gradient(0deg, ${DEFAULT_ACCENT_COLOR}, ${BACKGROUND})`
   },
 
   headerContainer: {
@@ -46,7 +56,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 22,
     fontWeight: "600",
-    color: "#111",
+    color: TEXT,
   },
 
   backButton: {
