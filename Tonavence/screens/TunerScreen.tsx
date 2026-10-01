@@ -12,7 +12,7 @@ export default function TunerScreen() {
 
   return (
     <View style={styles.gradientContainer}>
-      <SafeAreaView edges={["top"]} style={styles.container}>
+      <SafeAreaView edges={["top", "bottom"]} style={styles.container}>
         <View style={styles.headerContainer}>
           <Pressable
             onPress={() => router.back()}

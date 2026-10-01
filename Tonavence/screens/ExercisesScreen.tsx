@@ -5,6 +5,7 @@ import {
   StyleSheet,
   Pressable,
   Dimensions,
+  ScrollView
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
@@ -33,48 +34,50 @@ const exercises = [
 export default function ExercisesScreen() {
   return (
     <View style={styles.gradientContainer}>
-      <SafeAreaView style={styles.container} edges={["top"]}>
-        <View style={styles.header}>
-          <Pressable
-            onPress={() => router.back()}
-            style={styles.backButton}
-            hitSlop={10}
-          >
-            <Ionicons name="chevron-back" size={28} color={TEXT} />
-          </Pressable>
+      <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
+        <ScrollView showsVerticalScrollIndicator={false}>
+          <View style={styles.header}>
+            <Pressable
+              onPress={() => router.back()}
+              style={styles.backButton}
+              hitSlop={10}
+            >
+              <Ionicons name="chevron-back" size={28} color={TEXT} />
+            </Pressable>
 
-          <Text style={styles.title}>Exercises</Text>
+            <Text style={styles.title}>Exercises</Text>
 
-          <View style={styles.headerSpacer} />
-        </View>
-
-        <View style={styles.body}>
-          <View style={styles.grid}>
-            {exercises.map((exercise) => (
-              <Pressable
-                key={exercise}
-                style={({ pressed }) => [
-                  styles.exerciseCard,
-                  pressed && styles.exerciseCardPressed,
-                ]}
-                onPress={() => {
-                  // Individual exercise navigation will go here
-                }}
-              >
-                <View style={styles.cardShape} />
-
-                <Text style={styles.exerciseText}>{exercise}</Text>
-
-                <Ionicons
-                  name="chevron-forward"
-                  size={20}
-                  color={MUTED}
-                  style={styles.cardArrow}
-                />
-              </Pressable>
-            ))}
+            <View style={styles.headerSpacer} />
           </View>
-        </View>
+
+          <View style={styles.body}>
+            <View style={styles.grid}>
+              {exercises.map((exercise) => (
+                <Pressable
+                  key={exercise}
+                  style={({ pressed }) => [
+                    styles.exerciseCard,
+                    pressed && styles.exerciseCardPressed,
+                  ]}
+                  onPress={() => {
+                    // Individual exercise navigation will go here
+                  }}
+                >
+                  <View style={styles.cardShape} />
+
+                  <Text style={styles.exerciseText}>{exercise}</Text>
+
+                  <Ionicons
+                    name="chevron-forward"
+                    size={20}
+                    color={MUTED}
+                    style={styles.cardArrow}
+                  />
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        </ScrollView>
       </SafeAreaView>
     </View>
   );

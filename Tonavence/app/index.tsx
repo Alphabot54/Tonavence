@@ -1,10 +1,12 @@
 import React from "react";
+import { useEffect } from "react";
 import {
   View,
   Text,
   StyleSheet,
   Pressable,
   Dimensions,
+  ScrollView
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
@@ -22,102 +24,105 @@ const POLYGON_GREY = "#69717D";
 const { width } = Dimensions.get("window");
 
 export default function HomeScreen() {
+
   const router = useRouter();
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={["top"]}>
-      <View style={styles.container}>
+    <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
+      <ScrollView showsVerticalScrollIndicator={false}>
+        <View style={styles.container}>
 
-        {/* Decorative polygons */}
-        <View style={styles.backgroundPolygon1} />
-        <View style={styles.backgroundPolygon2} />
-        <View style={styles.backgroundPolygon3} />
+          {/* Decorative polygons */}
+          <View style={styles.backgroundPolygon1} />
+          <View style={styles.backgroundPolygon2} />
+          <View style={styles.backgroundPolygon3} />
 
-        {/* Header */}
-        <View style={styles.header}>
-          <View>
-            <Text style={styles.logo}>TONAVENCE</Text>
-            <Text style={styles.tagline}>
-              TOOLS FOR MUSICIANS
-            </Text>
-          </View>
+          {/* Header */}
+          <View style={styles.header}>
+            <View>
+              <Text style={styles.logo}>TONAVENCE</Text>
+              <Text style={styles.tagline}>
+                TOOLS FOR MUSICIANS
+              </Text>
+            </View>
 
-          <View style={styles.headerPolygon}>
-            <View style={styles.headerPolygonInner} />
-          </View>
-        </View>
-
-        {/* Main Hero */}
-        <View style={styles.hero}>
-
-          {/* Main polygon logo */}
-          <View style={styles.logoPolygonOuter}>
-            <View style={styles.logoPolygonMiddle}>
-              <View style={styles.logoPolygonInner}>
-                <Text style={styles.logoLetter}>T</Text>
-              </View>
+            <View style={styles.headerPolygon}>
+              <View style={styles.headerPolygonInner} />
             </View>
           </View>
 
-          <Text style={styles.welcomeText}>
-            PLAY WITH PURPOSE
-          </Text>
+          {/* Main Hero */}
+          <View style={styles.hero}>
 
-          <Text style={styles.heroText}>
-            Everything you need to tune, practice{"\n"}
-            and improve your playing.
-          </Text>
-        </View>
+            {/* Main polygon logo */}
+            <View style={styles.logoPolygonOuter}>
+              <View style={styles.logoPolygonMiddle}>
+                <View style={styles.logoPolygonInner}>
+                  <Text style={styles.logoLetter}>T</Text>
+                </View>
+              </View>
+            </View>
 
-        {/* Tools */}
-        <View style={styles.toolsSection}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>TOOLS</Text>
-            <View style={styles.sectionLine} />
+            <Text style={styles.welcomeText}>
+              PLAY WITH PURPOSE
+            </Text>
+
+            <Text style={styles.heroText}>
+              Everything you need to tune, practice{"\n"}
+              and improve your playing.
+            </Text>
           </View>
 
-          <View style={styles.toolsGrid}>
+          {/* Tools */}
+          <View style={styles.toolsSection}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>TOOLS</Text>
+              <View style={styles.sectionLine} />
+            </View>
 
-            {/* Metronome */}
-            <ToolCard
-              title="Metronome"
-              description="Precision timing"
-              icon="pulse-outline"
-              onPress={() => router.push("/metronome")}
-            />
+            <View style={styles.toolsGrid}>
 
-            {/* Tuner */}
-            <ToolCard
-              title="Tuner"
-              description="Tune your instrument"
-              icon="musical-note-outline"
-              onPress={() => router.push("/tuner")}
-            />
+              {/* Metronome */}
+              <ToolCard
+                title="Metronome"
+                description="Precision timing"
+                icon="pulse-outline"
+                onPress={() => router.push("/metronome")}
+              />
 
-            {/* Exercises */}
-            <ToolCard
-              title="Exercises"
-              description="Build your technique"
-              icon="fitness-outline"
-              wide
-              onPress={() => router.push("/exercise")}
-            />
+              {/* Tuner */}
+              <ToolCard
+                title="Tuner"
+                description="Tune your instrument"
+                icon="musical-note-outline"
+                onPress={() => router.push("/tuner")}
+              />
 
+              {/* Exercises */}
+              <ToolCard
+                title="Exercises"
+                description="Build your technique"
+                icon="fitness-outline"
+                wide
+                onPress={() => router.push("/exercise")}
+              />
+
+            </View>
           </View>
-        </View>
 
-        {/* Footer */}
-        <View style={styles.footer}>
-          <View style={styles.footerPolygon}>
-            <View style={styles.footerPolygonInner} />
+          {/* Footer */}
+          <View style={styles.footer}>
+            <View style={styles.footerPolygon}>
+              <View style={styles.footerPolygonInner} />
+            </View>
+
+            <Text style={styles.footerText}>
+              TONAVENCE
+            </Text>
           </View>
 
-          <Text style={styles.footerText}>
-            TONAVENCE
-          </Text>
         </View>
-
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }

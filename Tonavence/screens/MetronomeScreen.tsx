@@ -11,7 +11,7 @@ const TEXT = "#F2F4F7";
 export default function MetronomeScreen() {
   return (
     <View style={styles.gradientContainer}>
-      <SafeAreaView edges={["top"]} style={styles.container}>
+      <SafeAreaView edges={["top", "bottom"]} style={styles.container}>
         <View style={styles.headerContainer}>
           <Pressable
             onPress={() => router.back()}
