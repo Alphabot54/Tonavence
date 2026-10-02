@@ -4,6 +4,7 @@
     "slug": "Tonavence",
     "scheme": "tonavence",
     "version": "1.0.0",
+    "backgroundColor": "#0D0F12",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -28,7 +29,16 @@
       "expo-audio",
       "expo-asset",
       "expo-status-bar",
-      "expo-router"
+      "expo-router",
+      "expo-status-bar",
+      [
+        "expo-navigation-bar",
+        {
+          "enforceContrast": false,
+          "style": "dark"
+        }
+      ],
+      "expo-font"
     ],
     "extra": {
       "eas": {
