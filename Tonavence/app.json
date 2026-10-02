@@ -2,16 +2,11 @@
   "expo": {
     "name": "Tonavence",
     "slug": "Tonavence",
+    "scheme": "tonavence",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
-    },
     "ios": {
       "supportsTablet": true
     },
@@ -20,7 +15,6 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true,
       "permissions": [
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS"
@@ -32,8 +26,9 @@
     },
     "plugins": [
       "expo-audio",
-      "expo-stream-audio",
-      "expo-asset"
+      "expo-asset",
+      "expo-status-bar",
+      "expo-router"
     ],
     "extra": {
       "eas": {
