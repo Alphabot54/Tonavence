@@ -39,11 +39,12 @@ export default function MetronomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: BACKGROUND,
   },
 
   gradientContainer: {
     flex: 1,
-    experimental_backgroundImage: `linear-gradient(0deg, ${DEFAULT_ACCENT_COLOR}, ${BACKGROUND})`
+    experimental_backgroundImage: `linear-gradient(0deg, ${BACKGROUND}, ${DEFAULT_ACCENT_COLOR}, ${BACKGROUND})`
   },
 
   headerContainer: {

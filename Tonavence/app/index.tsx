@@ -2,13 +2,11 @@ import {
   View,
   Text,
   StyleSheet,
-  Pressable,
-  Dimensions,
   ScrollView
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { Ionicons } from "@expo/vector-icons";
+import ToolCard from "../components/ToolCard";
 
 const DEFAULT_ACCENT_COLOR = "#4DD0E1";
 
@@ -18,8 +16,6 @@ const SURFACE_2 = "#20242A";
 const TEXT = "#F2F4F7";
 const MUTED = "#8D96A3";
 const POLYGON_GREY = "#69717D";
-
-const { width } = Dimensions.get("window");
 
 export default function HomeScreen() {
 
@@ -85,6 +81,7 @@ export default function HomeScreen() {
                 title="Metronome"
                 description="Precision timing"
                 icon="pulse-outline"
+                accent
                 onPress={() => router.push("/metronome")}
               />
 
@@ -93,6 +90,7 @@ export default function HomeScreen() {
                 title="Tuner"
                 description="Tune your instrument"
                 icon="musical-note-outline"
+                accent
                 onPress={() => router.push("/tuner")}
               />
 
@@ -102,6 +100,7 @@ export default function HomeScreen() {
                 description="Build your technique"
                 icon="fitness-outline"
                 wide
+                accent
                 onPress={() => router.push("/exercise")}
               />
 
@@ -124,74 +123,6 @@ export default function HomeScreen() {
     </SafeAreaView>
   );
 }
-
-
-/* -------------------------------------------------------------------------- */
-/* Tool Card                                                                  */
-/* -------------------------------------------------------------------------- */
-
-type ToolCardProps = {
-  title: string;
-  description: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  wide?: boolean;
-  onPress: () => void;
-};
-
-function ToolCard({
-  title,
-  description,
-  icon,
-  wide,
-  onPress,
-}: ToolCardProps) {
-  return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.toolCard,
-        wide && styles.toolCardWide,
-        pressed && styles.toolCardPressed,
-      ]}
-    >
-
-      {/* Polygon corner decoration */}
-      <View style={styles.cardPolygon}>
-        <View style={styles.cardPolygonInner} />
-      </View>
-
-      {/* Icon */}
-      <View style={styles.iconContainer}>
-        <Ionicons
-          name={icon}
-          size={25}
-          color={DEFAULT_ACCENT_COLOR}
-        />
-      </View>
-
-      <View style={styles.cardTextContainer}>
-        <Text style={styles.toolTitle}>
-          {title}
-        </Text>
-
-        <Text style={styles.toolDescription}>
-          {description}
-        </Text>
-      </View>
-
-      {/* Arrow */}
-      <View style={styles.arrowContainer}>
-        <Ionicons
-          name="arrow-forward"
-          size={18}
-          color={DEFAULT_ACCENT_COLOR}
-        />
-      </View>
-
-    </Pressable>
-  );
-}
-
 
 /* -------------------------------------------------------------------------- */
 /* Styles                                                                     */
@@ -384,93 +315,6 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     justifyContent: "space-between",
     gap: 12,
-  },
-
-  toolCard: {
-    width: (width - 56) / 2,
-    height: 160,
-    backgroundColor: SURFACE,
-    borderWidth: 1,
-    borderColor: SURFACE_2,
-    borderRadius: 16,
-    padding: 16,
-    overflow: "hidden",
-  },
-
-  toolCardWide: {
-    width: "100%",
-    height: 125,
-  },
-
-  toolCardPressed: {
-    backgroundColor: SURFACE_2,
-    borderColor: DEFAULT_ACCENT_COLOR,
-    transform: [{ scale: 0.98 }],
-  },
-
-  /* Card polygon */
-
-  cardPolygon: {
-    position: "absolute",
-    width: 75,
-    height: 75,
-    right: -35,
-    top: -35,
-    borderWidth: 1,
-    borderColor: POLYGON_GREY,
-    opacity: 0.25,
-    transform: [{ rotate: "45deg" }],
-  },
-
-  cardPolygonInner: {
-    position: "absolute",
-    width: 38,
-    height: 38,
-    top: 18,
-    left: 18,
-    borderWidth: 1,
-    borderColor: DEFAULT_ACCENT_COLOR,
-  },
-
-  /* Icon */
-
-  iconContainer: {
-    width: 46,
-    height: 46,
-    borderRadius: 13,
-    backgroundColor: SURFACE_2,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  cardTextContainer: {
-    marginTop: 12,
-  },
-
-  toolTitle: {
-    color: TEXT,
-    fontSize: 17,
-    fontWeight: "700",
-  },
-
-  toolDescription: {
-    color: MUTED,
-    fontSize: 11,
-    marginTop: 3,
-  },
-
-  /* Arrow */
-
-  arrowContainer: {
-    position: "absolute",
-    right: 15,
-    bottom: 15,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: SURFACE_2,
-    alignItems: "center",
-    justifyContent: "center",
   },
 
   /* ---------------------------------------------------------------------- */

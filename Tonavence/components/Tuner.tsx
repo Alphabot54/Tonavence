@@ -36,6 +36,7 @@ const POLYGON_GREY = "#69717D";
 
 const TUNED_COLOR = "#66BB6A";
 const CLOSE_COLOR = "#D6C95C";
+const FAR_COLOR = '#EF5350';
 
 // ─────────────────────────────────────────────
 // Constants
@@ -222,7 +223,7 @@ export default function Tuner() {
     useState<number | null>(null);
 
   const [showOctave, setShowOctave] =
-    useState(true);
+    useState(false);
 
   const [
     referenceFrequency,
@@ -656,26 +657,26 @@ export default function Tuner() {
     const distance = Math.abs(cents);
 
     if (distance <= 3) {
-      return 5;
+      return 0;
     }
 
-    if (distance <= 7) {
-      return 4;
-    }
-
-    if (distance <= 12) {
-      return 3;
-    }
-
-    if (distance <= 20) {
-      return 2;
-    }
-
-    if (distance <= 35) {
+    if (distance <= 8) {
       return 1;
     }
 
-    return 0;
+    if (distance <= 18) {
+      return 2;
+    }
+
+    if (distance <= 30) {
+      return 3;
+    }
+
+    if (distance <= 40) {
+      return 4;
+    }
+
+    return 5;
   };
 
   const barLevel = getBarLevel();
@@ -696,7 +697,7 @@ export default function Tuner() {
       return CLOSE_COLOR;
     }
 
-    return DEFAULT_ACCENT_COLOR;
+    return FAR_COLOR;
   };
 
   // ─────────────────────────────────────────────
@@ -705,11 +706,23 @@ export default function Tuner() {
 
   const buildBars = (side: "left" | "right") => {
     const indexes = side === "left" ? [0, 1, 2, 3, 4] : [4, 3, 2, 1, 0];
+
     return indexes.map((heightIndex, position) => {
       const distanceFromCenter =
         side === "left" ? indexes.length - 1 - position : position;
-      const active = distanceFromCenter < barLevel;
-      return { heightIndex, active, color: getBarColor(heightIndex, active) };
+
+      const active =
+        barLevel === distanceFromCenter + 1 &&
+        (
+          (cents !== null && cents < 0 && side === "left") ||
+          (cents !== null && cents > 0 && side === "right")
+        );
+
+      return {
+        heightIndex,
+        active,
+        color: getBarColor(heightIndex, active),
+      };
     });
   };
 
@@ -769,16 +782,6 @@ export default function Tuner() {
 
       <View style={styles.tunerArea}>
 
-        <Text
-          style={[
-            styles.note,
-            isInTune &&
-              styles.noteTuned,
-          ]}
-        >
-          {displayedNote}
-        </Text>
-
         <View style={styles.barRow}>
 
           <View style={styles.sideBars}>
@@ -806,9 +809,16 @@ export default function Tuner() {
             )}
           </View>
 
-          <View
-            style={styles.centerSpace}
-          />
+          
+          <Text
+            style={[
+              styles.note,
+              isInTune &&
+                styles.noteTuned,
+            ]}
+          >
+            {displayedNote}
+          </Text>
 
           <View style={styles.sideBars}>
             {rightBars.map(
@@ -1142,6 +1152,8 @@ const styles = StyleSheet.create({
   },
 
   note: {
+    width: 150,
+    textAlign: "center",
     fontSize: 72,
     fontWeight: "600",
     color: TEXT,
@@ -1158,7 +1170,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 18,
+    paddingHorizontal: 25,
   },
 
   sideBars: {
@@ -1170,7 +1182,7 @@ const styles = StyleSheet.create({
   },
 
   centerSpace: {
-    width: 18,
+    width: 100,
   },
 
   bar: {
@@ -1211,10 +1223,12 @@ const styles = StyleSheet.create({
   },
 
   referenceButton: {
-    backgroundColor: SURFACE,
+    borderRadius: 14,
+    backgroundColor: SURFACE_2,
+    borderWidth: 1,
+    borderColor: "#303640",
     paddingHorizontal: 14,
     paddingVertical: 9,
-    borderRadius: 10,
   },
 
   referenceButtonPressed: {
@@ -1227,10 +1241,12 @@ const styles = StyleSheet.create({
   },
 
   octaveButton: {
-    backgroundColor: SURFACE,
+    borderRadius: 14,
+    backgroundColor: SURFACE_2,
+    borderWidth: 1,
+    borderColor: "#303640",
     paddingHorizontal: 14,
     paddingVertical: 9,
-    borderRadius: 10,
   },
 
   octaveButtonPressed: {
@@ -1281,7 +1297,7 @@ const styles = StyleSheet.create({
   adjustButton: {
     width: 48,
     height: 48,
-    borderRadius: 12,
+    borderRadius: 14,
     backgroundColor: SURFACE_2,
     alignItems: "center",
     justifyContent: "center",

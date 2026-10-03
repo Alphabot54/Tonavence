@@ -542,7 +542,7 @@ export default function PolygonMetronome({
 
   const polygonLayers = useMemo(
     () =>
-      Array.from({ length: 7 }, (_, index) => {
+      Array.from({ length: 11 }, (_, index) => {
         const sides = index + 2;
         return {
           sides,
@@ -597,7 +597,7 @@ export default function PolygonMetronome({
           <Ionicons
             name="trending-up-outline"
             size={25}
-            color={trainingActive ? accentColor : MUTED}
+            color={trainingActive ? accentColor : TEXT}
           />
           {trainingActive && (
             <View style={[styles.trainingIndicator, { backgroundColor: accentColor }]} />
@@ -1248,7 +1248,7 @@ const styles = StyleSheet.create({
   metronomeStage: {
     alignItems: "center",
     justifyContent: "center",
-    marginTop: 2,
+    marginTop: 28,
     marginBottom: 28,
   },
 
@@ -1270,13 +1270,16 @@ const styles = StyleSheet.create({
   },
 
   controlsRow: {
-    width: "100%",
-    maxWidth: 430,
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 24,
+    paddingHorizontal: 20,
     flexDirection: "row",
-    alignItems: "center",
     justifyContent: "center",
-    gap: 12,
-    paddingBottom: 20,
+    alignItems: "center",
+    gap: 20,
+    paddingBottom: 50,
   },
 
   playButton: {

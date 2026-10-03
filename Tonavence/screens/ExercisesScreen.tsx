@@ -1,4 +1,3 @@
-import React from "react";
 import {
   View,
   Text,
@@ -10,6 +9,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import ToolCard from "../components/ToolCard";
 
 const { width } = Dimensions.get("window");
 
@@ -21,15 +21,56 @@ const TEXT = "#F2F4F7";
 const MUTED = "#8D96A3";
 
 const exercises = [
-  "Chromatic",
-  "Scales",
-  "Intervals",
-  "Chords",
-  "Arpeggios",
-  "Ear Training",
-  "Rhythm",
-  "Technique",
+  {
+    title: "Chromatic",
+    description: "Improve finger coordination and dexterity",
+    icon: "musical-notes" as const,
+    pageRoute: "/exercises/chromatic",
+  },
+  {
+    title: "Scales",
+    description: "Practice scales and improve fretboard knowledge",
+    icon: "analytics" as const,
+    pageRoute: "/exercises/scales",
+  },
+  {
+    title: "Intervals",
+    description: "Develop your understanding of musical intervals",
+    icon: "git-compare" as const,
+    pageRoute: "/exercises/intervals",
+  },
+  {
+    title: "Chords",
+    description: "Practice chord shapes and transitions",
+    icon: "grid" as const,
+    pageRoute: "/exercises/chords",
+  },
+  {
+    title: "Arpeggios",
+    description: "Build accuracy and fluidity with arpeggios",
+    icon: "trending-up" as const,
+    pageRoute: "/exercises/arpeggios",
+  },
+  {
+    title: "Ear Training",
+    description: "Train your ear to recognize notes and intervals",
+    icon: "ear" as const,
+    pageRoute: "/exercises/ear-training",
+  },
+  {
+    title: "Rhythm",
+    description: "Improve timing, rhythm, and groove",
+    icon: "timer-outline" as const,
+    pageRoute: "/exercises/rhythm",
+  },
+  {
+    title: "Technique",
+    description: "Develop speed, precision, and control",
+    icon: "flash" as const,
+    pageRoute: "/exercises/technique",
+  },
 ];
+
 
 export default function ExercisesScreen() {
   return (
@@ -53,27 +94,14 @@ export default function ExercisesScreen() {
           <View style={styles.body}>
             <View style={styles.grid}>
               {exercises.map((exercise) => (
-                <Pressable
-                  key={exercise}
-                  style={({ pressed }) => [
-                    styles.exerciseCard,
-                    pressed && styles.exerciseCardPressed,
-                  ]}
-                  onPress={() => {
-                    // Individual exercise navigation will go here
-                  }}
-                >
-                  <View style={styles.cardShape} />
-
-                  <Text style={styles.exerciseText}>{exercise}</Text>
-
-                  <Ionicons
-                    name="chevron-forward"
-                    size={20}
-                    color={MUTED}
-                    style={styles.cardArrow}
-                  />
-                </Pressable>
+                <ToolCard 
+                  key={exercise.title}
+                  title={exercise.title}
+                  description={exercise.description}
+                  icon={exercise.icon}
+                  // wide
+                  onPress={() => router.push(exercise.pageRoute)}
+                />
               ))}
             </View>
           </View>
@@ -90,7 +118,7 @@ const styles = StyleSheet.create({
 
   gradientContainer: {
     flex: 1,
-    experimental_backgroundImage: `linear-gradient(0deg, ${DEFAULT_ACCENT_COLOR}, ${BACKGROUND})`
+    experimental_backgroundImage: `linear-gradient(0deg, ${BACKGROUND}, ${DEFAULT_ACCENT_COLOR}, ${DEFAULT_ACCENT_COLOR}, ${BACKGROUND})`
   },
 
   header: {
