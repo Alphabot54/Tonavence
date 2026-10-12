@@ -18,14 +18,13 @@ const BACKGROUND = "#0D0F12";
 const SURFACE = "#171A1F";
 const SURFACE_2 = "#20242A";
 const TEXT = "#F2F4F7";
-const MUTED = "#8D96A3";
 
 const exercises = [
   {
-    title: "Chromatic",
-    description: "Improve finger coordination and dexterity",
+    title: "Note Rush",
+    description: "Play notes and gain XP",
     icon: "musical-notes" as const,
-    pageRoute: "/exercises/chromatic",
+    pageRoute: "/exercises/note-rush",
   },
   {
     title: "Scales",

@@ -104,6 +104,16 @@ export default function HomeScreen() {
                 onPress={() => router.push("/exercise")}
               />
 
+              {/* Test */}
+              <ToolCard
+                title="Sounds"
+                description=""
+                icon="fitness-outline"
+                wide
+                accent
+                onPress={() => router.push("/sound-test")}
+              />
+
             </View>
           </View>
 
