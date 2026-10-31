@@ -27,10 +27,10 @@ const exercises = [
     pageRoute: "/exercises/note-rush",
   },
   {
-    title: "Scales",
-    description: "Practice scales and improve fretboard knowledge",
-    icon: "analytics" as const,
-    pageRoute: "/exercises/scales",
+    title: "Intervals",
+    description: "Develop your understanding of musical intervals",
+    icon: "git-compare" as const,
+    pageRoute: "/exercises/intervals",
   },
   {
     title: "Intervals",
