@@ -11,8 +11,8 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useAudioPlayer, type AudioSource } from "expo-audio";
 
-const DOWNBEAT_SOUND: AudioSource = require("../assets/sounds/DownClick.m4a");
-const UPBEAT_SOUND: AudioSource = require("../assets/sounds/UpClick.m4a");
+const DOWNBEAT_SOUND: AudioSource = require("../assets/sounds/Prec_MetronomeQuartz_lo.wav");
+const UPBEAT_SOUND: AudioSource = require("../assets/sounds/Perc_MetronomeQuartz_hi.wav");
 
 const MIN_BPM = 20;
 const MAX_BPM = 300;
