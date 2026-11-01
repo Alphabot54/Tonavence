@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -25,6 +25,7 @@ const TEXT = "#F2F4F7";
 const MUTED = "#8D96A3";
 const CORRECT = "#66BB6A";
 const INCORRECT = "#EF5350";
+const CORRECT_FEEDBACK_MS = 750;
 
 type Question = {
   interval: IntervalOption;
@@ -78,21 +79,52 @@ export default function IntervalsScreen() {
   const [feedback, setFeedback] = useState<"correct" | "incorrect" | null>(
     null,
   );
+  const advanceTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useFocusEffect(
     useCallback(() => {
       const updatedSettings = getIntervalSettings();
+      if (advanceTimeout.current) {
+        clearTimeout(advanceTimeout.current);
+        advanceTimeout.current = null;
+      }
+
+      const firstQuestion = createQuestion(updatedSettings);
       setSettings(updatedSettings);
-      setQuestion(createQuestion(updatedSettings));
+      setQuestion(firstQuestion);
       setSelectedAnswer(null);
       setFeedback(null);
+
+      // Play the first interval as soon as the exercise screen is focused.
+      playQuestion(firstQuestion);
+
+      return () => {
+        if (advanceTimeout.current) {
+          clearTimeout(advanceTimeout.current);
+          advanceTimeout.current = null;
+        }
+      };
     }, []),
   );
 
   const replay = () => playQuestion(question);
 
+  const nextQuestion = () => {
+    if (advanceTimeout.current) {
+      clearTimeout(advanceTimeout.current);
+      advanceTimeout.current = null;
+    }
+
+    const next = createQuestion(settings);
+    setQuestion(next);
+    setSelectedAnswer(null);
+    setFeedback(null);
+    playQuestion(next);
+  };
+
   const answerQuestion = (intervalId: string) => {
-    if (feedback !== null) return;
+    // Prevent additional answers while showing correct feedback.
+    if (feedback === "correct") return;
 
     setSelectedAnswer(intervalId);
     setAnswered((previous) => previous + 1);
@@ -101,17 +133,17 @@ export default function IntervalsScreen() {
       setFeedback("correct");
       setScore((previous) => previous + 1);
       setStreak((previous) => previous + 1);
+
+      advanceTimeout.current = setTimeout(() => {
+        nextQuestion();
+        advanceTimeout.current = null;
+      }, CORRECT_FEEDBACK_MS);
     } else {
+      // Show only the selected wrong answer in red.
       setFeedback("incorrect");
       setStreak(0);
     }
-  };
-
-  const nextQuestion = () => {
-    setQuestion(createQuestion(settings));
-    setSelectedAnswer(null);
-    setFeedback(null);
-  };
+};
 
   const enabledIntervals = INTERVALS.filter((interval) =>
     settings.selectedIntervals.includes(interval.id),
@@ -150,7 +182,7 @@ export default function IntervalsScreen() {
           <View style={styles.statsRow}>
             <View style={styles.statCard}>
               <Text style={styles.statValue}>{score}</Text>
-              <Text style={styles.statLabel}>Correct</Text>
+              <Text style={styles.statLabel}>Completed</Text>
             </View>
 
             <View style={styles.statCard}>
@@ -165,15 +197,6 @@ export default function IntervalsScreen() {
           </View>
 
           <View style={styles.listenCard}>
-            <View style={styles.soundIcon}>
-              <Ionicons name="musical-notes" size={30} color={ACCENT} />
-            </View>
-
-            <Text style={styles.sectionTitle}>What interval do you hear?</Text>
-            <Text style={styles.subtitle}>
-              Listen to both notes and identify the distance between them.
-            </Text>
-
             <Pressable
               onPress={replay}
               style={({ pressed }) => [
@@ -184,10 +207,6 @@ export default function IntervalsScreen() {
               <Ionicons name="play" size={23} color={BACKGROUND} />
               <Text style={styles.playButtonText}>Play interval</Text>
             </Pressable>
-
-            <Text style={styles.replayHint}>
-              You can listen as many times as you need.
-            </Text>
           </View>
 
           <View style={styles.answerSection}>
@@ -201,7 +220,9 @@ export default function IntervalsScreen() {
             <View style={styles.answerGrid}>
               {enabledIntervals.map((interval) => {
                 const isCorrectAnswer =
-                  feedback !== null && interval.id === question.interval.id;
+                  feedback === "correct" &&
+                  interval.id === question.interval.id;
+
                 const isWrongSelection =
                   selectedAnswer === interval.id &&
                   feedback === "incorrect";
@@ -209,7 +230,7 @@ export default function IntervalsScreen() {
                 return (
                   <Pressable
                     key={interval.id}
-                    disabled={feedback !== null}
+                    disabled={feedback === "correct"}
                     onPress={() => answerQuestion(interval.id)}
                     style={({ pressed }) => [
                       styles.answerButton,
@@ -249,53 +270,6 @@ export default function IntervalsScreen() {
             </View>
           </View>
 
-          {feedback !== null && (
-            <View
-              style={[
-                styles.feedbackCard,
-                feedback === "correct"
-                  ? styles.feedbackCorrect
-                  : styles.feedbackIncorrect,
-              ]}
-            >
-              <View style={styles.feedbackHeading}>
-                <Ionicons
-                  name={
-                    feedback === "correct"
-                      ? "checkmark-circle"
-                      : "close-circle"
-                  }
-                  size={23}
-                  color={feedback === "correct" ? CORRECT : INCORRECT}
-                />
-
-                <Text style={styles.feedbackTitle}>
-                  {feedback === "correct" ? "Correct!" : "Not quite"}
-                </Text>
-              </View>
-
-              <Text style={styles.feedbackDescription}>
-                {question.interval.name}
-                {" · "}
-                {question.interval.semitones} semitone
-                {question.interval.semitones === 1 ? "" : "s"}
-                {" · "}
-                {question.ascending ? "Ascending" : "Descending"}
-              </Text>
-
-              <Pressable
-                onPress={nextQuestion}
-                style={({ pressed }) => [
-                  styles.nextButton,
-                  pressed && styles.pressed,
-                ]}
-              >
-                <Text style={styles.nextButtonText}>Next question</Text>
-                <Ionicons name="arrow-forward" size={19} color={BACKGROUND} />
-              </Pressable>
-            </View>
-          )}
-
           <View style={styles.settingsSummary}>
             <Ionicons name="options-outline" size={18} color={MUTED} />
             <Text style={styles.settingsSummaryText}>
@@ -330,10 +304,11 @@ const styles = StyleSheet.create({
     backgroundColor: BACKGROUND,
   },
   scrollContent: {
-    paddingBottom: 28,
+    flexGrow: 1,
+    paddingBottom: 10,
   },
   header: {
-    height: 64,
+    height: 52,
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 16,
@@ -355,11 +330,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 10,
     paddingHorizontal: 16,
-    marginTop: 8,
+    marginTop: 4,
   },
   statCard: {
     flex: 1,
-    paddingVertical: 14,
+    paddingVertical: 8,
     borderRadius: 16,
     backgroundColor: SURFACE,
     borderWidth: 1,
@@ -378,14 +353,9 @@ const styles = StyleSheet.create({
   },
   listenCard: {
     marginHorizontal: 16,
-    marginTop: 20,
     paddingHorizontal: 20,
     paddingVertical: 24,
     alignItems: "center",
-    borderRadius: 24,
-    backgroundColor: SURFACE,
-    borderWidth: 1,
-    borderColor: SURFACE_2,
   },
   soundIcon: {
     width: 62,
@@ -416,9 +386,9 @@ const styles = StyleSheet.create({
     gap: 9,
     backgroundColor: ACCENT,
     borderRadius: 15,
-    paddingVertical: 14,
-    paddingHorizontal: 25,
-    marginTop: 22,
+    paddingVertical: 11,
+    paddingHorizontal: 22,
+    marginTop: 5,
     minWidth: 190,
   },
   playButtonText: {
@@ -433,13 +403,13 @@ const styles = StyleSheet.create({
   },
   answerSection: {
     paddingHorizontal: 16,
-    marginTop: 25,
+    marginTop: 10,
   },
   answerHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 13,
+    marginBottom: 8,
   },
   answerCount: {
     color: MUTED,
@@ -448,15 +418,15 @@ const styles = StyleSheet.create({
   answerGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 10,
+    gap: 8,
   },
   answerButton: {
     width: "48%",
     flexGrow: 1,
-    minHeight: 52,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    borderRadius: 14,
+    minHeight: 44,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 12,
     backgroundColor: SURFACE,
     borderWidth: 1,
     borderColor: SURFACE_2,
@@ -484,9 +454,9 @@ const styles = StyleSheet.create({
   },
   feedbackCard: {
     marginHorizontal: 16,
-    marginTop: 20,
-    borderRadius: 18,
-    padding: 18,
+    marginTop: 10,
+    borderRadius: 15,
+    padding: 12,
     borderWidth: 1,
   },
   feedbackCorrect: {
@@ -527,8 +497,13 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "800",
   },
+  tryAgainText: {
+    color: MUTED,
+    fontSize: 12,
+    marginTop: 8,
+  },
   settingsSummary: {
-    marginTop: 23,
+    marginTop: 12,
     marginHorizontal: 20,
     flexDirection: "row",
     alignItems: "center",

@@ -28,45 +28,15 @@ const exercises = [
   },
   {
     title: "Intervals",
-    description: "Develop your understanding of musical intervals",
-    icon: "git-compare" as const,
-    pageRoute: "/exercises/intervals",
-  },
-  {
-    title: "Intervals",
-    description: "Develop your understanding of musical intervals",
+    description: "Listen to and select intervals",
     icon: "git-compare" as const,
     pageRoute: "/exercises/intervals",
   },
   {
     title: "Chords",
-    description: "Practice chord shapes and transitions",
+    description: "Listen to and hear progressions",
     icon: "grid" as const,
     pageRoute: "/exercises/chords",
-  },
-  {
-    title: "Arpeggios",
-    description: "Build accuracy and fluidity with arpeggios",
-    icon: "trending-up" as const,
-    pageRoute: "/exercises/arpeggios",
-  },
-  {
-    title: "Ear Training",
-    description: "Train your ear to recognize notes and intervals",
-    icon: "ear" as const,
-    pageRoute: "/exercises/ear-training",
-  },
-  {
-    title: "Rhythm",
-    description: "Improve timing, rhythm, and groove",
-    icon: "timer-outline" as const,
-    pageRoute: "/exercises/rhythm",
-  },
-  {
-    title: "Technique",
-    description: "Develop speed, precision, and control",
-    icon: "flash" as const,
-    pageRoute: "/exercises/technique",
   },
 ];
 

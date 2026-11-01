@@ -11,7 +11,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useAudioPlayer, type AudioSource } from "expo-audio";
 
-const DOWNBEAT_SOUND: AudioSource = require("../assets/sounds/Prec_MetronomeQuartz_lo.wav");
+const DOWNBEAT_SOUND: AudioSource = require("../assets/sounds/Perc_MetronomeQuartz_lo.wav");
 const UPBEAT_SOUND: AudioSource = require("../assets/sounds/Perc_MetronomeQuartz_hi.wav");
 
 const MIN_BPM = 20;
@@ -162,7 +162,10 @@ export default function PolygonMetronome({
     () =>
       initialAccentPattern?.length === initialSignature.numerator
         ? initialAccentPattern
-        : Array(initialSignature.numerator).fill(true)
+        : Array.from(
+            { length: initialSignature.numerator },
+            (_, index) => index === 0
+          )
   );
 
   const [popup, setPopup] = useState<Popup>(null);
@@ -418,7 +421,7 @@ export default function PolygonMetronome({
     setAccentPattern((previous) =>
       Array.from(
         { length: timeSignature.numerator },
-        (_, index) => previous[index] ?? true
+        (_, index) => previous[index] ?? index === 0
       )
     );
     setCurrentBeat(0);
